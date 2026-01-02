@@ -5,13 +5,12 @@ AgentX Runtime Core
 Container（会话管理）和类型定义。
 """
 
-from .agent_engine import AgentEngine
-from .container import Container
-from .event_bus import EventBus
+# Always available: type definitions
 from .types import (
     EventType,
     SessionState,
     AgentState,
+    MessageRole,
     AgentEvent,
     StreamEvent,
     StateEvent,
@@ -19,17 +18,25 @@ from .types import (
     TurnEvent,
     AgentSession,
     Message,
-    MessageRole,
     ToolCall,
 )
 
+# Conditionally import components as they're implemented
+try:
+    from .event_bus import EventBus
+except ImportError:
+    EventBus = None
+
+# Will be implemented in later phases
+AgentEngine = None
+Container = None
+
 __all__ = [
-    "AgentEngine",
-    "Container",
-    "EventBus",
+    # Types
     "EventType",
     "SessionState",
     "AgentState",
+    "MessageRole",
     "AgentEvent",
     "StreamEvent",
     "StateEvent",
@@ -37,6 +44,9 @@ __all__ = [
     "TurnEvent",
     "AgentSession",
     "Message",
-    "MessageRole",
     "ToolCall",
+    # Components
+    "EventBus",
+    "AgentEngine",
+    "Container",
 ]

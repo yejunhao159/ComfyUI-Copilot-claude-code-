@@ -8,29 +8,50 @@ ComfyUI-AgentX Runtime
 __version__ = "1.0.0"
 __author__ = "ComfyUI-Copilot Team"
 
-from .runtime.agent_engine import AgentEngine
-from .runtime.container import Container
-from .runtime.event_bus import EventBus
+# Core type definitions
 from .runtime.types import (
     EventType,
     SessionState,
+    AgentState,
+    MessageRole,
     AgentEvent,
+    StreamEvent,
+    StateEvent,
+    MessageEvent,
+    TurnEvent,
     AgentSession,
     Message,
-    MessageRole,
     ToolCall,
 )
 
+# Runtime components (import when available)
+try:
+    from .runtime.event_bus import EventBus
+except ImportError:
+    EventBus = None
+
+# Will be implemented in later phases
+AgentEngine = None
+Container = None
+
 __all__ = [
-    "AgentEngine",
-    "Container",
-    "EventBus",
+    # Types
     "EventType",
     "SessionState",
+    "AgentState",
+    "MessageRole",
     "AgentEvent",
+    "StreamEvent",
+    "StateEvent",
+    "MessageEvent",
+    "TurnEvent",
     "AgentSession",
     "Message",
-    "MessageRole",
     "ToolCall",
+    # Components
+    "EventBus",
+    "AgentEngine",
+    "Container",
+    # Meta
     "__version__",
 ]
