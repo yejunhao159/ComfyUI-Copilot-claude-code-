@@ -1,7 +1,38 @@
-__pycache__
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment files
 hash
 .env
-.env.llm
+.env.*
+!.env.example
 # Logs
 logs
 *.log
@@ -31,3 +62,22 @@ backup
 .cache
 # dev
 ui/yarn.lock
+
+# AgentX Runtime
+backend/agentx/**/*.db
+backend/agentx/**/*.db-*
+agentx_sessions.db
+agentx_sessions.db-*
+*.sqlite
+*.sqlite3
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+
+# Alembic
+alembic/versions/__pycache__/
