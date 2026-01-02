@@ -68,4 +68,20 @@ try:
 except Exception as e:
     print(f"✗ Failed to create config: {e}")
 
+# Test AgentEngine and Container imports
+print("✓ Importing AgentEngine and Container...")
+from backend.agentx.runtime.agent_engine import AgentEngine
+from backend.agentx.runtime.container import Container
+
+# Test API server
+print("✓ Importing API server...")
+from backend.agentx.api import create_app
+
+# Test MCP tools
+print("✓ Importing MCP tools...")
+from backend.agentx.mcp_tools.comfyui_tools import get_comfyui_tools
+
+tools = get_comfyui_tools()
+print(f"✓ Loaded {len(tools)} ComfyUI tools: {[t['name'] for t in tools]}")
+
 print("\n✅ Smoke test passed!")

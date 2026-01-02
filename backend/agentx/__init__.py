@@ -24,15 +24,10 @@ from .runtime.types import (
     ToolCall,
 )
 
-# Runtime components (import when available)
-try:
-    from .runtime.event_bus import EventBus
-except ImportError:
-    EventBus = None
-
-# Will be implemented in later phases
-AgentEngine = None
-Container = None
+# Runtime components
+from .runtime.event_bus import EventBus
+from .runtime.agent_engine import AgentEngine
+from .runtime.container import Container
 
 __all__ = [
     # Types

@@ -21,15 +21,10 @@ from .types import (
     ToolCall,
 )
 
-# Conditionally import components as they're implemented
-try:
-    from .event_bus import EventBus
-except ImportError:
-    EventBus = None
-
-# Will be implemented in later phases
-AgentEngine = None
-Container = None
+# Import runtime components
+from .event_bus import EventBus
+from .agent_engine import AgentEngine
+from .container import Container
 
 __all__ = [
     # Types
