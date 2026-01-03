@@ -1,0 +1,708 @@
+openapi: 3.0.3
+info:
+  title: AgentX Runtime API
+  description: |
+    AgentX Runtime HTTP and WebSocket API for ComfyUI-AgentX.
+
+    Provides endpoints for session management, message streaming, and tool execution.
+  version: 1.0.0
+  contact:
+    name: ComfyUI-Copilot Team
+
+servers:
+  - url: http://localhost:8188/agentx
+    description: Local ComfyUI server
+
+tags:
+  - name: sessions
+    description: Session lifecycle management
+  - name: messages
+    description: Message history and retrieval
+  - name: streaming
+    description: Real-time event streaming (WebSocket)
+  - name: tools
+    description: MCP tool discovery and execution
+
+paths:
+  # ==================== Sessions ====================
+
+  /sessions:
+    post:
+      tags: [sessions]
+      summary: Create a new AgentX session
+      description: |
+        Initializes a new conversation session with Claude.
+        Returns session_id for subsequent operations.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                  description: Optional user identifier
+                  example: "user-123"
+                config:
+                  type: object
+                  description: Session-specific configuration (overrides defaults)
+                  properties:
+                    model:
+                      type: string
+                      example: "claude-3-5-sonnet-20241022"
+                    max_tokens:
+                      type: integer
+                      example: 4096
+                    temperature:
+                      type: number
+                      format: float
+                      example: 1.0
+      responses:
+        '201':
+          description: Session created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    get:
+      tags: [sessions]
+      summary: List all sessions
+      description: |
+        Retrieves a paginated list of all conversation sessions.
+        Ordered by most recent first.
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by user ID
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+          description: Number of sessions to skip
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+          description: Maximum sessions to return
+      responses:
+        '200':
+          description: Session list retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SessionSummary'
+                  total:
+                    type: integer
+                    description: Total number of sessions matching filters
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+
+  /sessions/{session_id}:
+    get:
+      tags: [sessions]
+      summary: Get session details
+      description: Retrieves full session metadata (without messages)
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Session found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [sessions]
+      summary: Delete a session
+      description: |
+        Permanently deletes a session and all associated messages.
+        This action cannot be undone.
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204':
+          description: Session deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==================== Messages ====================
+
+  /sessions/{session_id}/messages:
+    get:
+      tags: [messages]
+      summary: Get message history
+      description: |
+        Retrieves all messages in a session, paginated.
+        Ordered chronologically (oldest first).
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+      responses:
+        '200':
+          description: Messages retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  total:
+                    type: integer
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [messages]
+      summary: Send a message (non-streaming)
+      description: |
+        Sends a user message and returns the complete assistant response.
+        For streaming, use WebSocket instead (see /sessions/{session_id}/stream).
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: User message text
+                  example: "Fix the error in my workflow"
+      responses:
+        '200':
+          description: Message processed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_message:
+                    $ref: '#/components/schemas/Message'
+                  assistant_message:
+                    $ref: '#/components/schemas/Message'
+                  turn_id:
+                    type: string
+                    example: "turn-abc123"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          description: Rate limit exceeded (Claude API)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ==================== WebSocket Streaming ====================
+
+  /sessions/{session_id}/stream:
+    get:
+      tags: [streaming]
+      summary: WebSocket connection for real-time streaming
+      description: |
+        Upgrades to WebSocket for bidirectional streaming.
+
+        **Client → Server Messages**:
+        - `{"type": "message", "content": "user text"}` - Send user message
+        - `{"type": "cancel"}` - Cancel ongoing processing
+        - `{"type": "ping"}` - Heartbeat (server responds with pong)
+
+        **Server → Client Events**:
+        - StreamEvent: `{"type": "stream", "data": "token"}`
+        - StateEvent: `{"type": "state", "data": {"state": "calling_tool", ...}}`
+        - MessageEvent: `{"type": "message", "data": {...}}`
+        - TurnEvent: `{"type": "turn", "data": {...}}`
+        - Error: `{"type": "error", "error": "..."}`
+        - Pong: `{"type": "pong"}`
+
+        Connection closes on session deletion or explicit client disconnect.
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '101':
+          description: Switching Protocols (WebSocket established)
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-websocket-messages:
+        send:
+          - $ref: '#/components/schemas/WSClientMessage'
+        receive:
+          - $ref: '#/components/schemas/WSServerEvent'
+
+  # ==================== Tools ====================
+
+  /tools:
+    get:
+      tags: [tools]
+      summary: List all available MCP tools
+      description: |
+        Returns all tools currently registered from MCP servers.
+        Includes built-in ComfyUI tools and external MCP servers.
+      responses:
+        '200':
+          description: Tool list retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MCPTool'
+                  servers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MCPServer'
+
+  /tools/{tool_name}/schema:
+    get:
+      tags: [tools]
+      summary: Get JSON Schema for a specific tool
+      description: Returns the input_schema for a tool
+      parameters:
+        - name: tool_name
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "get_workflow"
+      responses:
+        '200':
+          description: Schema found
+          content:
+            application/json:
+              schema:
+                type: object
+                description: JSON Schema object
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==================== Health ====================
+
+  /health:
+    get:
+      tags: [health]
+      summary: Health check
+      description: Returns runtime status and MCP server health
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded]
+                  mcp_servers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        status:
+                          type: string
+                          enum: [running, stopped, error]
+                  database:
+                    type: string
+                    enum: [connected, error]
+
+# ==================== Components ====================
+
+components:
+  parameters:
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^agx-[0-9a-f]{32}$'
+      example: "agx-a1b2c3d4e5f67890abcdef1234567890"
+
+  schemas:
+    # Session schemas
+    SessionResponse:
+      type: object
+      required: [session_id, created_at, updated_at, state, config]
+      properties:
+        session_id:
+          type: string
+          example: "agx-a1b2c3d4e5f67890abcdef1234567890"
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-01-02T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+        state:
+          type: string
+          enum: [idle, processing, waiting_for_tool, error, closed]
+          example: "idle"
+        config:
+          type: object
+          properties:
+            model:
+              type: string
+            max_tokens:
+              type: integer
+            temperature:
+              type: number
+        user_id:
+          type: string
+          nullable: true
+        title:
+          type: string
+          nullable: true
+          example: "Workflow debugging session"
+        message_count:
+          type: integer
+          example: 15
+
+    SessionSummary:
+      type: object
+      properties:
+        session_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        title:
+          type: string
+          nullable: true
+        message_count:
+          type: integer
+        last_message_preview:
+          type: string
+          description: First 100 chars of last message
+          example: "The workflow error is caused by invalid parameter..."
+
+    # Message schemas
+    Message:
+      type: object
+      required: [message_id, role, content, timestamp]
+      properties:
+        message_id:
+          type: string
+          example: "msg-def456"
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+          example: "Fix the error in my workflow"
+        timestamp:
+          type: string
+          format: date-time
+        tool_calls:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/ToolCall'
+        input_tokens:
+          type: integer
+          nullable: true
+        output_tokens:
+          type: integer
+          nullable: true
+
+    ToolCall:
+      type: object
+      required: [id, name, arguments]
+      properties:
+        id:
+          type: string
+          example: "call-xyz789"
+        name:
+          type: string
+          example: "get_workflow"
+        arguments:
+          type: object
+          description: Tool input parameters
+        result:
+          type: object
+          nullable: true
+          description: Tool execution result
+        error:
+          type: string
+          nullable: true
+          description: Error message if tool failed
+
+    # MCP schemas
+    MCPTool:
+      type: object
+      required: [name, description, input_schema, server]
+      properties:
+        name:
+          type: string
+          example: "get_workflow"
+        description:
+          type: string
+          example: "Retrieves the current ComfyUI workflow JSON"
+        input_schema:
+          type: object
+          description: JSON Schema for tool inputs
+        server:
+          type: string
+          description: Name of MCP server providing this tool
+          example: "comfyui"
+
+    MCPServer:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "comfyui"
+        type:
+          type: string
+          enum: [stdio, sse, internal]
+        status:
+          type: string
+          enum: [running, stopped, starting, error]
+        tool_count:
+          type: integer
+        error:
+          type: string
+          nullable: true
+
+    # WebSocket schemas
+    WSClientMessage:
+      oneOf:
+        - type: object
+          required: [type, content]
+          properties:
+            type:
+              type: string
+              enum: [message]
+            content:
+              type: string
+              description: User message text
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [cancel, ping]
+
+    WSServerEvent:
+      oneOf:
+        - $ref: '#/components/schemas/StreamEvent'
+        - $ref: '#/components/schemas/StateEvent'
+        - $ref: '#/components/schemas/MessageEvent'
+        - $ref: '#/components/schemas/TurnEvent'
+        - $ref: '#/components/schemas/WSError'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [pong]
+
+    StreamEvent:
+      type: object
+      required: [type, session_id, data, timestamp]
+      properties:
+        type:
+          type: string
+          enum: [stream]
+        session_id:
+          type: string
+        data:
+          type: string
+          description: Text token
+        timestamp:
+          type: string
+          format: date-time
+
+    StateEvent:
+      type: object
+      required: [type, session_id, data, timestamp]
+      properties:
+        type:
+          type: string
+          enum: [state]
+        session_id:
+          type: string
+        data:
+          type: object
+          required: [state]
+          properties:
+            state:
+              type: string
+              enum: [thinking, calling_tool, tool_result, responding, done, error]
+            tool_name:
+              type: string
+              nullable: true
+            tool_call_id:
+              type: string
+              nullable: true
+            progress:
+              type: string
+              nullable: true
+        timestamp:
+          type: string
+          format: date-time
+
+    MessageEvent:
+      type: object
+      required: [type, session_id, data, timestamp]
+      properties:
+        type:
+          type: string
+          enum: [message]
+        session_id:
+          type: string
+        data:
+          $ref: '#/components/schemas/Message'
+        timestamp:
+          type: string
+          format: date-time
+
+    TurnEvent:
+      type: object
+      required: [type, session_id, data, timestamp]
+      properties:
+        type:
+          type: string
+          enum: [turn]
+        session_id:
+          type: string
+        data:
+          type: object
+          required: [turn_id, user_message_id, assistant_message_id, total_tokens, duration_ms]
+          properties:
+            turn_id:
+              type: string
+            user_message_id:
+              type: string
+            assistant_message_id:
+              type: string
+            total_tokens:
+              type: integer
+            duration_ms:
+              type: integer
+        timestamp:
+          type: string
+          format: date-time
+
+    WSError:
+      type: object
+      required: [type, error]
+      properties:
+        type:
+          type: string
+          enum: [error]
+        error:
+          type: string
+          description: Error message
+        code:
+          type: string
+          description: Error code (e.g., TOOL_TIMEOUT, API_ERROR)
+
+    # Error schemas
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+        code:
+          type: string
+          description: Machine-readable error code
+        details:
+          type: object
+          description: Additional error context
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Invalid session_id format"
+            code: "INVALID_SESSION_ID"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Session not found"
+            code: "SESSION_NOT_FOUND"
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Database connection failed"
+            code: "DATABASE_ERROR"
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Optional API key for multi-tenant deployments
+
+security: []  # No authentication required for local ComfyUI usage
