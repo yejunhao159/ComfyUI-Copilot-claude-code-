@@ -5,7 +5,6 @@ Claude API integration with streaming support and tool calling.
 """
 
 import asyncio
-import logging
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional, AsyncIterator
@@ -32,8 +31,9 @@ from .types import (
 )
 from .event_bus import EventBus
 from ..config import AgentConfig
+from ...utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AgentEngine:
@@ -57,8 +57,20 @@ class AgentEngine:
         """
         self.config = config
         self.event_bus = event_bus
-        self.client = AsyncAnthropic(api_key=config.anthropic_api_key)
-        logger.info(f"AgentEngine initialized with model {config.model}")
+
+        # Create client with optional base_url (for relay servers)
+        client_kwargs = {"api_key": config.anthropic_api_key}
+        if config.anthropic_base_url:
+            client_kwargs["base_url"] = config.anthropic_base_url
+            logger.info("Using custom Anthropic base URL", base_url=config.anthropic_base_url)
+
+        self.client = AsyncAnthropic(**client_kwargs)
+        logger.info(
+            "AgentEngine initialized",
+            model=config.model,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature
+        )
 
     async def generate(
         self,
@@ -166,7 +178,12 @@ class AgentEngine:
                         )
 
         except Exception as e:
-            logger.error(f"Error in agent generation: {e}", exc_info=True)
+            logger.exception(
+                "Error in agent generation",
+                session_id=session_id,
+                model=self.config.model,
+                message_count=len(messages)
+            )
             # Emit ERROR state
             await self.event_bus.publish(
                 StateEvent(
@@ -232,34 +249,49 @@ class AgentEngine:
 
         for msg in messages:
             content = []
+            role = msg.role.value
 
-            # Add text content
-            if msg.content:
-                content.append({"type": "text", "text": msg.content})
+            # Handle assistant messages with tool calls
+            if msg.role == MessageRole.ASSISTANT and msg.tool_calls:
+                # Add text content first
+                if msg.content:
+                    content.append({"type": "text", "text": msg.content})
+                # Add tool use blocks
+                for tc in msg.tool_calls:
+                    content.append({
+                        "type": "tool_use",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "input": tc.arguments,
+                    })
 
-            # Add tool use/result content
-            if msg.tool_calls:
+            # Handle user messages with tool results
+            elif msg.role == MessageRole.USER and msg.tool_calls:
+                # Tool result messages - only add tool_result blocks
                 for tc in msg.tool_calls:
                     if tc.result is not None:
-                        # Tool result (user message)
+                        # Convert result to string if it's a dict
+                        result_content = tc.result
+                        if isinstance(result_content, dict):
+                            import json
+                            result_content = json.dumps(result_content)
                         content.append({
                             "type": "tool_result",
                             "tool_use_id": tc.id,
-                            "content": str(tc.result),
-                        })
-                    else:
-                        # Tool use (assistant message)
-                        content.append({
-                            "type": "tool_use",
-                            "id": tc.id,
-                            "name": tc.name,
-                            "input": tc.arguments,
+                            "content": str(result_content),
                         })
 
-            anthropic_messages.append({
-                "role": msg.role.value,
-                "content": content if content else msg.content,
-            })
+            # Handle regular text messages
+            else:
+                if msg.content:
+                    content.append({"type": "text", "text": msg.content})
+
+            # Only add message if it has content
+            if content:
+                anthropic_messages.append({
+                    "role": role,
+                    "content": content,
+                })
 
         return anthropic_messages
 

@@ -5,7 +5,6 @@ Session lifecycle management and conversation state tracking.
 """
 
 import asyncio
-import logging
 import uuid
 from datetime import datetime
 from typing import Dict, Optional, List
@@ -14,8 +13,9 @@ from .event_bus import EventBus
 from .agent_engine import AgentEngine
 from ..persistence import PersistenceService
 from ..config import AgentConfig
+from ...utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Container:
@@ -94,7 +94,7 @@ class Container:
         # Persist to database
         self.persistence.create_session(session)
 
-        logger.info(f"Created session: {session_id}")
+        logger.info("Session created", session_id=session_id, user_id=user_id, title=title)
         return session
 
     async def get_session(self, session_id: str) -> Optional[AgentSession]:
@@ -122,7 +122,7 @@ class Container:
             self._sessions[session_id] = session
             self._locks[session_id] = asyncio.Lock()
 
-            logger.debug(f"Loaded session from database: {session_id}")
+            logger.debug("Loaded session from database", session_id=session_id, message_count=len(messages))
             return session
 
         return None
@@ -202,7 +202,13 @@ class Container:
                 session.updated_at = datetime.utcnow()
                 self.persistence.update_session_state(session_id, session.state)
 
-                logger.info(f"Processed message in session {session_id}")
+                logger.info(
+                    "Message processed",
+                    session_id=session_id,
+                    has_tool_calls=bool(response.tool_calls),
+                    tool_count=len(response.tool_calls) if response.tool_calls else 0,
+                    state=session.state.value
+                )
                 return response
 
             except Exception as e:
@@ -210,22 +216,20 @@ class Container:
                 session.state = SessionState.ERROR
                 session.updated_at = datetime.utcnow()
                 self.persistence.update_session_state(session_id, SessionState.ERROR)
-                logger.error(f"Error processing message: {e}", exc_info=True)
+                logger.exception("Error processing message", session_id=session_id)
                 raise
 
-    async def submit_tool_result(
+    async def submit_tool_results(
         self,
         session_id: str,
-        tool_call_id: str,
-        result: Dict,
+        tool_results: List[Dict],
     ) -> Message:
         """
-        Submit tool execution result and continue generation.
+        Submit all tool execution results at once and continue generation.
 
         Args:
             session_id: Session ID
-            tool_call_id: Tool call ID
-            result: Tool execution result
+            tool_results: List of {"tool_call_id": str, "result": dict}
 
         Returns:
             Assistant response message
@@ -238,7 +242,7 @@ class Container:
             if session.state != SessionState.WAITING_FOR_TOOL:
                 raise ValueError(f"Session not waiting for tool: {session_id}")
 
-            # Find the assistant message with the tool call
+            # Find the assistant message with tool calls
             last_assistant_msg = None
             for msg in reversed(session.messages):
                 if msg.role == MessageRole.ASSISTANT and msg.tool_calls:
@@ -248,20 +252,31 @@ class Container:
             if not last_assistant_msg:
                 raise ValueError("No pending tool call found")
 
-            # Update tool call result
+            # Update all tool call results
+            result_map = {tr["tool_call_id"]: tr["result"] for tr in tool_results}
             for tc in last_assistant_msg.tool_calls:
-                if tc.id == tool_call_id:
-                    tc.result = result
-                    break
+                if tc.id in result_map:
+                    tc.result = result_map[tc.id]
 
-            # Create user message with tool result
+            # Create a single user message with ALL tool results
+            from .types import ToolCall
+            tool_calls_with_results = []
+            for tc in last_assistant_msg.tool_calls:
+                if tc.result is not None:
+                    tool_calls_with_results.append(ToolCall(
+                        id=tc.id,
+                        name=tc.name,
+                        arguments=tc.arguments,
+                        result=tc.result,
+                    ))
+
             tool_result_message = Message(
                 message_id=str(uuid.uuid4()),
                 session_id=session_id,
                 role=MessageRole.USER,
                 content="",  # Tool results are in tool_calls
                 timestamp=datetime.utcnow(),
-                tool_calls=[tc for tc in last_assistant_msg.tool_calls if tc.id == tool_call_id],
+                tool_calls=tool_calls_with_results,
             )
 
             session.messages.append(tool_result_message)
@@ -281,10 +296,13 @@ class Container:
             session.messages.append(response)
             self.persistence.save_message(response)
 
-            # Update state
-            session.state = SessionState.IDLE
+            # Update state - check if more tool calls needed
+            if response.tool_calls:
+                session.state = SessionState.WAITING_FOR_TOOL
+            else:
+                session.state = SessionState.IDLE
             session.updated_at = datetime.utcnow()
-            self.persistence.update_session_state(session_id, SessionState.IDLE)
+            self.persistence.update_session_state(session_id, session.state)
 
             return response
 
@@ -308,7 +326,7 @@ class Container:
             self._sessions.pop(session_id, None)
             self._locks.pop(session_id, None)
 
-            logger.info(f"Closed session: {session_id}")
+            logger.info("Session closed", session_id=session_id)
 
     async def list_sessions(
         self, user_id: Optional[str] = None, limit: int = 50

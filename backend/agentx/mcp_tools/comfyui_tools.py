@@ -1,128 +1,62 @@
 """
 ComfyUI MCP Tools
 
-Built-in tools for ComfyUI workflow debugging and manipulation.
+This module provides a modular tool system for ComfyUI workflow manipulation.
+
+Tools are organized into categories:
+- Workflow Tools: get_workflow, update_workflow, clear_workflow
+- Node Tools: add_node, remove_node, modify_node, connect_nodes, disconnect_input
+- Search Tools: search_nodes, get_node_info, list_node_categories
+- Execution Tools: execute_workflow, get_execution_result, interrupt_execution
+- Validation Tools: validate_workflow, analyze_workflow
+- Image Tools: get_execution_images, get_latest_images
+- Template Tools: save_workflow_template, load_workflow_template, list_workflow_templates, delete_workflow_template
+- System Tools: list_models, get_system_stats, get_comfyui_info, clear_queue
 """
 
 import logging
-from typing import Dict, Any, List, Optional
-from fastmcp import FastMCP
+from typing import Dict, Any, List
+
+# Import the modular tool system
+from .tools.base import registry
+from .tools.workflow_state import state
+from .tools.workflow_tools import WorkflowTools
+from .tools.node_tools import NodeTools
+from .tools.search_tools import SearchTools
+from .tools.execution_tools import ExecutionTools
+from .tools.validation_tools import ValidationTools
+from .tools.image_tools import ImageTools
+from .tools.template_tools import TemplateTools
+from .tools.system_tools import SystemTools
 
 logger = logging.getLogger(__name__)
 
-# Initialize MCP server
-mcp = FastMCP("comfyui-tools", "ComfyUI workflow debugging and manipulation tools")
+# Flag to track if tools are registered
+_tools_registered = False
 
 
-@mcp.tool()
-def get_workflow(workflow_id: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Get the current ComfyUI workflow or a specific workflow by ID.
-
-    Args:
-        workflow_id: Optional workflow ID. If not provided, returns the current active workflow.
-
-    Returns:
-        Workflow object with nodes, connections, and metadata.
-    """
-    # TODO: Integrate with ComfyUI backend
-    # For now, return a placeholder
-    logger.info(f"get_workflow called with workflow_id={workflow_id}")
-
-    return {
-        "workflow_id": workflow_id or "current",
-        "nodes": [],
-        "links": [],
-        "metadata": {
-            "name": "Current Workflow",
-            "description": "Active ComfyUI workflow",
-        },
-    }
+def _ensure_tools_registered():
+    """Ensure all tools are registered."""
+    global _tools_registered
+    if not _tools_registered:
+        # Core tools
+        WorkflowTools.register_all()
+        NodeTools.register_all()
+        SearchTools.register_all()
+        ExecutionTools.register_all()
+        # Enhanced tools
+        ValidationTools.register_all()
+        ImageTools.register_all()
+        TemplateTools.register_all()
+        SystemTools.register_all()
+        _tools_registered = True
+        logger.info(f"Registered {len(registry.list_tools())} ComfyUI tools")
 
 
-@mcp.tool()
-def update_workflow(workflow_id: str, nodes: List[Dict], links: List[Dict]) -> Dict[str, Any]:
-    """
-    Update a ComfyUI workflow with new nodes and connections.
+# ============================================
+# Public API (backwards compatible)
+# ============================================
 
-    Args:
-        workflow_id: Workflow ID to update
-        nodes: List of node definitions
-        links: List of connection definitions
-
-    Returns:
-        Updated workflow object.
-    """
-    logger.info(f"update_workflow called for workflow_id={workflow_id}")
-
-    # TODO: Integrate with ComfyUI backend
-    return {
-        "workflow_id": workflow_id,
-        "nodes": nodes,
-        "links": links,
-        "updated": True,
-    }
-
-
-@mcp.tool()
-def modify_node(
-    workflow_id: str,
-    node_id: str,
-    parameter: str,
-    value: Any,
-) -> Dict[str, Any]:
-    """
-    Modify a specific parameter of a node in the workflow.
-
-    Args:
-        workflow_id: Workflow ID
-        node_id: Node ID to modify
-        parameter: Parameter name to change
-        value: New value for the parameter
-
-    Returns:
-        Updated node object.
-    """
-    logger.info(f"modify_node: workflow={workflow_id}, node={node_id}, param={parameter}")
-
-    # TODO: Integrate with ComfyUI backend
-    return {
-        "workflow_id": workflow_id,
-        "node_id": node_id,
-        "parameter": parameter,
-        "old_value": None,
-        "new_value": value,
-        "updated": True,
-    }
-
-
-@mcp.tool()
-def get_execution_logs(
-    workflow_id: str,
-    limit: int = 100,
-) -> Dict[str, Any]:
-    """
-    Get execution logs for a workflow.
-
-    Args:
-        workflow_id: Workflow ID
-        limit: Maximum number of log entries to return
-
-    Returns:
-        Log entries with timestamps and error information.
-    """
-    logger.info(f"get_execution_logs: workflow={workflow_id}, limit={limit}")
-
-    # TODO: Integrate with ComfyUI backend
-    return {
-        "workflow_id": workflow_id,
-        "logs": [],
-        "error_count": 0,
-        "warning_count": 0,
-    }
-
-
-# Export tool definitions in Anthropic format
 def get_comfyui_tools() -> List[Dict[str, Any]]:
     """
     Get ComfyUI tool definitions in Anthropic Claude format.
@@ -130,75 +64,10 @@ def get_comfyui_tools() -> List[Dict[str, Any]]:
     Returns:
         List of tool definitions
     """
-    return [
-        {
-            "name": "get_workflow",
-            "description": "Get the current ComfyUI workflow or a specific workflow by ID",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "workflow_id": {
-                        "type": "string",
-                        "description": "Optional workflow ID. If not provided, returns the current active workflow.",
-                    }
-                },
-            },
-        },
-        {
-            "name": "update_workflow",
-            "description": "Update a ComfyUI workflow with new nodes and connections",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "workflow_id": {"type": "string", "description": "Workflow ID to update"},
-                    "nodes": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "List of node definitions",
-                    },
-                    "links": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "List of connection definitions",
-                    },
-                },
-                "required": ["workflow_id", "nodes", "links"],
-            },
-        },
-        {
-            "name": "modify_node",
-            "description": "Modify a specific parameter of a node in the workflow",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "workflow_id": {"type": "string", "description": "Workflow ID"},
-                    "node_id": {"type": "string", "description": "Node ID to modify"},
-                    "parameter": {"type": "string", "description": "Parameter name to change"},
-                    "value": {"description": "New value for the parameter"},
-                },
-                "required": ["workflow_id", "node_id", "parameter", "value"],
-            },
-        },
-        {
-            "name": "get_execution_logs",
-            "description": "Get execution logs for a workflow",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "workflow_id": {"type": "string", "description": "Workflow ID"},
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of log entries to return",
-                        "default": 100,
-                    },
-                },
-                "required": ["workflow_id"],
-            },
-        },
-    ]
+    _ensure_tools_registered()
+    return registry.get_all_tools()
 
 
-# Tool executor for AgentEngine integration
 async def execute_comfyui_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     Execute a ComfyUI tool by name.
@@ -213,13 +82,80 @@ async def execute_comfyui_tool(tool_name: str, arguments: Dict[str, Any]) -> Dic
     Raises:
         ValueError: If tool name is not recognized
     """
-    if tool_name == "get_workflow":
-        return get_workflow(**arguments)
-    elif tool_name == "update_workflow":
-        return update_workflow(**arguments)
-    elif tool_name == "modify_node":
-        return modify_node(**arguments)
-    elif tool_name == "get_execution_logs":
-        return get_execution_logs(**arguments)
-    else:
-        raise ValueError(f"Unknown tool: {tool_name}")
+    _ensure_tools_registered()
+    return await registry.execute_tool(tool_name, arguments)
+
+
+# ============================================
+# Legacy API (for backwards compatibility)
+# ============================================
+
+def set_current_workflow(workflow: Dict[str, Any]) -> None:
+    """Set the current workflow state (legacy API)."""
+    state.workflow = workflow
+
+
+def get_current_workflow_state() -> Dict[str, Any]:
+    """Get the current workflow state (legacy API)."""
+    return state.workflow
+
+
+# Re-export for backwards compatibility
+async def get_workflow(workflow_id=None):
+    """Get current workflow (legacy API)."""
+    _ensure_tools_registered()
+    return await registry.execute_tool("get_workflow", {"workflow_id": workflow_id})
+
+
+async def update_workflow(workflow_data):
+    """Update workflow (legacy API)."""
+    _ensure_tools_registered()
+    return await registry.execute_tool("update_workflow", {"workflow_data": workflow_data})
+
+
+async def search_nodes(keywords, limit=10):
+    """Search nodes (legacy API)."""
+    _ensure_tools_registered()
+    return await registry.execute_tool("search_nodes", {"keywords": keywords, "limit": limit})
+
+
+async def get_node_info(node_classes):
+    """Get node info (legacy API)."""
+    _ensure_tools_registered()
+    return await registry.execute_tool("get_node_info", {"node_classes": node_classes})
+
+
+async def execute_workflow(workflow=None):
+    """Execute workflow (legacy API)."""
+    _ensure_tools_registered()
+    return await registry.execute_tool("execute_workflow", {"workflow": workflow})
+
+
+async def get_execution_result(prompt_id, wait=False, timeout=60):
+    """Get execution result (legacy API)."""
+    _ensure_tools_registered()
+    return await registry.execute_tool("get_execution_result", {
+        "prompt_id": prompt_id, "wait": wait, "timeout": timeout
+    })
+
+
+async def modify_node(node_id, parameter, value):
+    """Modify node (legacy API)."""
+    _ensure_tools_registered()
+    return await registry.execute_tool("modify_node", {
+        "node_id": node_id, "input_name": parameter, "value": value
+    })
+
+
+async def add_node(node_id, class_type, inputs=None):
+    """Add node (legacy API)."""
+    _ensure_tools_registered()
+    return await registry.execute_tool("add_node", {
+        "class_type": class_type, "inputs": inputs, "node_id": node_id
+    })
+
+
+async def remove_node(node_id):
+    """Remove node (legacy API)."""
+    _ensure_tools_registered()
+    return await registry.execute_tool("remove_node", {"node_id": node_id})

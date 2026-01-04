@@ -15,6 +15,7 @@ class AgentConfig:
 
     # Claude API
     anthropic_api_key: str
+    anthropic_base_url: Optional[str] = None  # Custom API endpoint (e.g., relay.deepractice.ai)
     model: str = "claude-3-5-sonnet-20241022"
     max_tokens: int = 4096
     temperature: float = 1.0
@@ -63,6 +64,7 @@ class AgentConfig:
 
         return cls(
             anthropic_api_key=api_key,
+            anthropic_base_url=os.getenv("ANTHROPIC_BASE_URL"),
             model=os.getenv("AGENTX_MODEL", "claude-3-5-sonnet-20241022"),
             max_tokens=int(os.getenv("AGENTX_MAX_TOKENS", "4096")),
             temperature=float(os.getenv("AGENTX_TEMPERATURE", "1.0")),

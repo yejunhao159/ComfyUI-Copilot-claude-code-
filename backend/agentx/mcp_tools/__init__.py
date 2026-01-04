@@ -5,6 +5,6 @@ ComfyUI MCP Tools
 包括工作流、节点、调试和系统工具。
 """
 
-from .comfyui_tools import register_comfyui_tools
+from .comfyui_tools import get_comfyui_tools, execute_comfyui_tool
 
-__all__ = ["register_comfyui_tools"]
+__all__ = ["get_comfyui_tools", "execute_comfyui_tool"]

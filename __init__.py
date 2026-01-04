@@ -1,66 +1,58 @@
-'''
-Author: ai-business-hql qingli.hql@alibaba-inc.com
-Date: 2025-02-17 20:53:45
-LastEditors: ai-business-hql ai.bussiness.hql@gmail.com
-LastEditTime: 2025-11-20 20:03:20
-FilePath: /comfyui_copilot/__init__.py
-Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
-'''
-# Copyright (C) 2025 AIDC-AI
+"""
+ComfyUI-AgentX: AI Agent for ComfyUI workflow debugging and manipulation.
+
+Based on Deepractice AgentX runtime with Claude integration.
+"""
+# Copyright (C) 2025 Deepractice
 # Licensed under the MIT License.
 
-import sys
-import asyncio
+import os
 
+# Load .env file from plugin directory
+from dotenv import load_dotenv
+plugin_dir = os.path.dirname(__file__)
+env_path = os.path.join(plugin_dir, '.env')
+if os.path.exists(env_path):
+    load_dotenv(env_path)
 
-# Ensure 'agents' resolves to openai-agents (not legacy RL package)
-try:
-    import importlib.metadata as _im
-    from pathlib import Path as _Path
+# Initialize logging system FIRST (before other imports)
+from .backend.utils.logger import configure_logging, get_logger
 
-    try:
-        _dist = _im.distribution("openai-agents")
-    except _im.PackageNotFoundError:
-        _dist = None
+# Configure logging based on environment
+log_level = os.getenv("AGENTX_LOG_LEVEL", "INFO")
+log_dir = os.path.join(plugin_dir, "backend", "logs")
+configure_logging(log_level=log_level, log_dir=log_dir)
 
-    if _dist and _dist.files:
-        _init_rel = next((f for f in _dist.files if str(f).replace("\\", "/").endswith("agents/__init__.py")), None)
-        if _init_rel:
-            _init_path = _dist.locate_file(_init_rel)
-            _agents_parent = _Path(_init_path).parent.parent
-            _pp = str(_agents_parent)
-            if _pp not in sys.path:
-                sys.path.insert(0, _pp)
+logger = get_logger(__name__)
+logger.info("AgentX logging initialized", log_level=log_level)
 
-            # If an incompatible 'agents' was already imported, drop it so the correct one can load
-            m = sys.modules.get("agents")
-            if m is not None and not hasattr(m, "Agent"):
-                sys.modules.pop("agents", None)
-except Exception:
-    # Fail-open: never block plugin loading if aliasing fails
-    pass
-
-import asyncio
+# Now import other modules
 import server
 from aiohttp import web
 import folder_paths
-from .backend.controller.conversation_api import *
-from .backend.controller.llm_api import *
-from .backend.controller.expert_api import *
 
-WEB_DIRECTORY = "entry"
+from .backend.agentx.api.server import create_agentx_routes
+
+# Configuration
 NODE_CLASS_MAPPINGS = {}
 __all__ = ['NODE_CLASS_MAPPINGS']
-version = "V2.1.0"
+version = "V3.0.0"
 
+# Web extension directory - ComfyUI will auto-discover and load JS files
+WEB_DIRECTORY = "web"
+
+# Paths
 workspace_path = os.path.join(os.path.dirname(__file__))
 comfy_path = os.path.dirname(folder_paths.__file__)
 db_dir_path = os.path.join(workspace_path, "db")
 
-dist_path = os.path.join(workspace_path, 'dist/copilot_web')
-if os.path.exists(dist_path):
-    server.PromptServer.instance.app.add_routes([
-        web.static('/copilot_web/', dist_path),
-    ])
-else:
-    print(f"🦄🦄🔴🔴Error: Web directory not found: {dist_path}")
+# Register AgentX API routes
+try:
+    agentx_routes = create_agentx_routes()
+    server.PromptServer.instance.app.add_routes(agentx_routes)
+    logger.info("AgentX API routes registered", endpoint="/api/agentx/", version=version)
+except Exception as e:
+    logger.exception("Failed to register AgentX API routes")
+
+# Note: UI is embedded in ComfyUI via WEB_DIRECTORY extension system
+# The JS extension at web/js/agentx_extension.js adds a sidebar panel

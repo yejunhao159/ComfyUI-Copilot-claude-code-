@@ -4,7 +4,6 @@ AgentX Persistence Service
 CRUD operations for sessions, messages, and events.
 """
 
-import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from sqlalchemy import create_engine, desc, and_
@@ -27,8 +26,9 @@ from ..runtime.types import (
     EventType,
 )
 from ..config import AgentConfig
+from ...utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PersistenceService:
@@ -49,17 +49,19 @@ class PersistenceService:
             config: Agent configuration with database URL
         """
         self.config = config
-        self.engine = create_engine(
-            config.database_url,
-            pool_size=config.db_pool_size,
-            max_overflow=config.db_max_overflow,
-            echo=config.log_level == "DEBUG",
-        )
+
+        # Build engine kwargs (SQLite doesn't support pool_size/max_overflow)
+        engine_kwargs = {"echo": config.log_level == "DEBUG"}
+        if not config.database_url.startswith("sqlite"):
+            engine_kwargs["pool_size"] = config.db_pool_size
+            engine_kwargs["max_overflow"] = config.db_max_overflow
+
+        self.engine = create_engine(config.database_url, **engine_kwargs)
         self.SessionLocal = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
 
         # Create tables if they don't exist
         Base.metadata.create_all(bind=self.engine)
-        logger.info(f"PersistenceService initialized with {config.database_url}")
+        logger.info("PersistenceService initialized", database_url=config.database_url)
 
     def get_session(self) -> Session:
         """Get a new database session."""
@@ -89,10 +91,10 @@ class PersistenceService:
             )
             db.add(model)
             db.commit()
-            logger.debug(f"Created session: {session.session_id}")
+            logger.debug("Created session", session_id=session.session_id)
         except SQLAlchemyError as e:
             db.rollback()
-            logger.error(f"Failed to create session: {e}")
+            logger.error("Failed to create session", error=str(e))
             raise
         finally:
             db.close()
@@ -130,10 +132,10 @@ class PersistenceService:
                 {"state": state, "updated_at": datetime.utcnow()}
             )
             db.commit()
-            logger.debug(f"Updated session {session_id} state to {state.value}")
+            logger.debug("Updated session state", session_id=session_id, state=state.value)
         except SQLAlchemyError as e:
             db.rollback()
-            logger.error(f"Failed to update session state: {e}")
+            logger.error("Failed to update session state", session_id=session_id, error=str(e))
             raise
         finally:
             db.close()
@@ -192,10 +194,10 @@ class PersistenceService:
             )
             db.add(model)
             db.commit()
-            logger.debug(f"Saved message: {message.message_id}")
+            logger.debug("Saved message", message_id=message.message_id, session_id=message.session_id)
         except SQLAlchemyError as e:
             db.rollback()
-            logger.error(f"Failed to save message: {e}")
+            logger.error("Failed to save message", message_id=message.message_id, error=str(e))
             raise
         finally:
             db.close()
@@ -255,7 +257,7 @@ class PersistenceService:
             db.commit()
         except SQLAlchemyError as e:
             db.rollback()
-            logger.error(f"Failed to save event: {e}")
+            logger.error("Failed to save event", session_id=session_id, event_type=str(event_type), error=str(e))
         finally:
             db.close()
 

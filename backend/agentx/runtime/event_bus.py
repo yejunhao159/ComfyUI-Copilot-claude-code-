@@ -5,12 +5,12 @@ Pub/Sub event system with bounded queue and backpressure handling.
 """
 
 import asyncio
-import logging
 from collections import defaultdict
 from typing import Dict, List, Callable, AsyncIterator, Optional, Set
 from .types import AgentEvent, EventType
+from ...utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class EventBus:
@@ -51,9 +51,9 @@ class EventBus:
         try:
             # Put with timeout to avoid indefinite blocking
             await asyncio.wait_for(self._queue.put(event), timeout=5.0)
-            logger.debug(f"Published event: {event.type.value} for session {event.session_id}")
+            logger.debug("Published event", event_type=event.type.value, session_id=event.session_id)
         except asyncio.TimeoutError:
-            logger.error(f"Event queue full, dropping event: {event.type.value}")
+            logger.error("Event queue full, dropping event", event_type=event.type.value)
             raise asyncio.QueueFull("Event queue is full")
 
     async def subscribe(
@@ -73,7 +73,7 @@ class EventBus:
         self._subscribers[event_type].append(handler)
         if session_id:
             self._session_subscribers[session_id].add(event_type)
-        logger.debug(f"Subscribed to {event_type.value} events")
+        logger.debug("Subscribed to events", event_type=event_type.value)
 
     async def unsubscribe(
         self,
@@ -89,7 +89,7 @@ class EventBus:
         """
         if handler in self._subscribers[event_type]:
             self._subscribers[event_type].remove(handler)
-            logger.debug(f"Unsubscribed from {event_type.value} events")
+            logger.debug("Unsubscribed from events", event_type=event_type.value)
 
     async def consume(
         self,
@@ -157,14 +157,14 @@ class EventBus:
                         else:
                             handler(event)
                     except Exception as e:
-                        logger.error(f"Error in event handler: {e}", exc_info=True)
+                        logger.exception("Error in event handler")
 
                 self._queue.task_done()
 
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
-                logger.error(f"Error in event consumer loop: {e}", exc_info=True)
+                logger.exception("Error in event consumer loop")
 
     def qsize(self) -> int:
         """Return current queue size."""

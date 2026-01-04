@@ -235,15 +235,19 @@ class TurnEventData:
     assistant_message_id: str
     total_tokens: int
     duration_ms: int
+    executed_tools: Optional[List[Dict[str, Any]]] = None  # Tool calls executed during this turn
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "turn_id": self.turn_id,
             "user_message_id": self.user_message_id,
             "assistant_message_id": self.assistant_message_id,
             "total_tokens": self.total_tokens,
             "duration_ms": self.duration_ms,
         }
+        if self.executed_tools:
+            result["executed_tools"] = self.executed_tools
+        return result
 
 
 @dataclass
