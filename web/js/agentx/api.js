@@ -206,10 +206,20 @@ ${workflowSection}
 - _meta.title for custom display names
 
 ## Rules:
-1. When user asks to CREATE a workflow → use update_workflow with complete workflow
-2. When modifying existing workflow → use modify_node, add_node, connect_nodes
-3. After update_workflow → workflow auto-syncs to canvas
+1. When user asks to CREATE a workflow → Output the complete workflow JSON in a \`\`\`json code block
+2. When modifying existing workflow → use modify_node, add_node, connect_nodes tools
+3. Workflow JSON in code blocks will be auto-loaded to canvas
 4. To test workflow → use execute_workflow, then get_execution_result with wait=true
-5. Always take ACTION with tools, don't just describe what you would do
-6. Be thorough with connections - every input that needs data must be connected`;
+5. Always take ACTION - output workflow JSON or use tools, don't just describe
+6. Be thorough with connections - every input that needs data must be connected
+
+## IMPORTANT: When creating workflows, output them like this:
+\`\`\`json
+{
+  "1": {"class_type": "CheckpointLoaderSimple", "inputs": {...}},
+  "2": {"class_type": "CLIPTextEncode", "inputs": {...}},
+  ...
+}
+\`\`\`
+The system will automatically detect and load the workflow to the ComfyUI canvas.`;
 }

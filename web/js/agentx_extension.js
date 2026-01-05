@@ -185,6 +185,59 @@ class AgentXSidebar {
     }
 
     /**
+     * Check if an object looks like a valid ComfyUI workflow
+     */
+    isValidWorkflow(obj) {
+        if (!obj || typeof obj !== 'object') return false;
+
+        // Check if it has node-like entries with class_type
+        const keys = Object.keys(obj);
+        if (keys.length === 0) return false;
+
+        // At least one entry should have class_type
+        return keys.some(key => {
+            const node = obj[key];
+            return node && typeof node === 'object' && node.class_type;
+        });
+    }
+
+    /**
+     * Try to detect and load workflow JSON from message content
+     * This handles cases where the agent outputs workflow JSON in text
+     */
+    tryLoadWorkflowFromMessage(content) {
+        if (!content) return;
+
+        // Look for JSON code blocks that might contain workflow
+        const jsonBlockRegex = /```(?:json)?\s*\n?(\{[\s\S]*?\})\s*\n?```/g;
+        let match;
+
+        while ((match = jsonBlockRegex.exec(content)) !== null) {
+            try {
+                const jsonStr = match[1];
+                const parsed = JSON.parse(jsonStr);
+
+                if (this.isValidWorkflow(parsed)) {
+                    console.log("[AgentX] Found workflow in message, loading to canvas");
+                    loadWorkflowToCanvas(parsed);
+                    this.addSystemMessage("✓ Workflow loaded to canvas!");
+                    return; // Load only the first valid workflow found
+                }
+            } catch (e) {
+                // Not valid JSON or not a workflow, continue
+            }
+        }
+
+        // Also try to find inline JSON objects that look like workflows
+        // Pattern: starts with { and ends with }, contains "class_type"
+        if (content.includes('"class_type"')) {
+            const inlineJsonRegex = /\{[^{}]*"class_type"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
+            // This is a simplified pattern, might not catch all cases
+            // The code block pattern above is more reliable
+        }
+    }
+
+    /**
      * Sync current canvas workflow to backend
      * This allows Claude to read and analyze the user's workflow
      */
@@ -263,17 +316,33 @@ class AgentXSidebar {
         const msg = this.chatContainer.querySelector(".agentx-message.assistant.streaming");
         if (msg) {
             msg.classList.remove("streaming");
+            const messageContent = this.currentStreamingMessageContent;
             this.currentStreamingMessageContent = ""; // Clear buffer
 
             // Remove tool indicator
             const indicator = msg.querySelector(".agentx-tool-indicator");
             if (indicator) indicator.remove();
 
-            // Process workflow updates
+            // Try to detect and load workflow from message content
+            this.tryLoadWorkflowFromMessage(messageContent);
+
+            // Process workflow updates from tool calls
             if (toolCalls) {
                 for (const tc of toolCalls) {
                     if (tc.name === "update_workflow" && tc.arguments?.workflow_data) {
                         loadWorkflowToCanvas(tc.arguments.workflow_data);
+                    }
+                    // Also check for Write tool writing workflow files
+                    if (tc.name === "Write" && tc.arguments?.file_path?.includes("workflow") && tc.arguments?.content) {
+                        try {
+                            const workflowData = JSON.parse(tc.arguments.content);
+                            if (this.isValidWorkflow(workflowData)) {
+                                console.log("[AgentX] Loading workflow from Write tool");
+                                loadWorkflowToCanvas(workflowData);
+                            }
+                        } catch (e) {
+                            // Not valid JSON, ignore
+                        }
                     }
                 }
 

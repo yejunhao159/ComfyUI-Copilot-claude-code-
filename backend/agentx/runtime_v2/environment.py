@@ -416,6 +416,7 @@ class ClaudeEffector(Effector):
         self._tools: List[Dict[str, Any]] = []
         self._tool_executor: Optional[Callable] = None
         self._cli_path: Optional[str] = None
+        self._mcp_server = None  # SDK MCP server for custom tools
 
         # Find CLI path
         self._cli_path = config.cli_path or _find_system_claude_cli()
@@ -428,9 +429,8 @@ class ClaudeEffector(Effector):
         """
         Set available tools and their executor.
 
-        Note: With claude-agent-sdk, custom tools are passed via MCP servers.
-        This method stores the tools for potential future use but the primary
-        tool execution is handled by the SDK's built-in capabilities.
+        Creates an SDK MCP server to provide custom tools to claude-agent-sdk.
+        This allows ComfyUI tools to be used alongside native Claude Code tools.
 
         Args:
             tools: List of tool definitions in Anthropic format
@@ -438,7 +438,74 @@ class ClaudeEffector(Effector):
         """
         self._tools = tools
         self._tool_executor = executor
+
+        # Create MCP server for custom tools
+        if tools and executor:
+            self._mcp_server = self._create_mcp_server(tools, executor)
+            logger.info(f"Created MCP server with {len(tools)} ComfyUI tools")
+        else:
+            self._mcp_server = None
+
         logger.debug(f"Custom tools configured: {[t.get('name') for t in tools]}")
+
+    def _create_mcp_server(self, tools: List[Dict[str, Any]], executor: Callable):
+        """
+        Create an SDK MCP server for custom tools.
+
+        Uses claude_agent_sdk.create_sdk_mcp_server to create an in-process
+        MCP server that provides ComfyUI tools to the SDK.
+        """
+        try:
+            from claude_agent_sdk import create_sdk_mcp_server, tool as sdk_tool
+
+            # Store executor in instance for closure access
+            self._stored_executor = executor
+
+            # Convert Anthropic tool definitions to SDK tools using @tool decorator
+            sdk_tools = []
+            for tool_def in tools:
+                tool_name = tool_def.get("name", "")
+                tool_desc = tool_def.get("description", "")
+                tool_schema = tool_def.get("input_schema", {})
+
+                # Create SDK tool using decorator
+                # We need to capture tool_name in closure
+                def create_tool_func(name: str, exec_func: Callable):
+                    @sdk_tool(name, tool_desc, tool_schema)
+                    async def tool_handler(args: dict):
+                        try:
+                            result = await exec_func(name, args)
+                            return {
+                                "content": [
+                                    {"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}
+                                ]
+                            }
+                        except Exception as e:
+                            return {
+                                "content": [
+                                    {"type": "text", "text": f"Error: {str(e)}"}
+                                ],
+                                "isError": True
+                            }
+                    return tool_handler
+
+                sdk_tools.append(create_tool_func(tool_name, executor))
+
+            # Create MCP server
+            server = create_sdk_mcp_server(
+                name="comfyui",
+                version="1.0.0",
+                tools=sdk_tools,
+            )
+
+            return server
+
+        except ImportError as e:
+            logger.warning(f"Failed to import SDK MCP tools: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to create MCP server: {e}")
+            return None
 
     def connect(self, consumer: SystemBusConsumer) -> None:
         """Connect to SystemBus consumer."""
@@ -522,6 +589,11 @@ class ClaudeEffector(Effector):
             if self.config.api_key:
                 env["ANTHROPIC_API_KEY"] = self.config.api_key
 
+            # Build MCP servers config
+            mcp_servers = dict(self.config.mcp_servers or {})
+            if self._mcp_server:
+                mcp_servers["comfyui"] = self._mcp_server
+
             # Build SDK options
             options = ClaudeAgentOptions(
                 model=self.config.model or "claude-sonnet-4-20250514",
@@ -529,7 +601,7 @@ class ClaudeEffector(Effector):
                 env=env,
                 system_prompt=self.config.system_prompt,
                 cwd=self.config.cwd,
-                mcp_servers=self.config.mcp_servers or {},
+                mcp_servers=mcp_servers,
                 allowed_tools=self.config.allowed_tools,
                 resume=self.config.resume_session_id,
                 cli_path=self._cli_path,
