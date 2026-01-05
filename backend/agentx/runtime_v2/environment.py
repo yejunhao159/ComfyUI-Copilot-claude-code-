@@ -439,14 +439,11 @@ class ClaudeEffector(Effector):
         self._tools = tools
         self._tool_executor = executor
 
-        # Create MCP server for custom tools
-        if tools and executor:
-            self._mcp_server = self._create_mcp_server(tools, executor)
-            logger.info(f"Created MCP server with {len(tools)} ComfyUI tools")
-        else:
-            self._mcp_server = None
+        # Note: MCP server creation is disabled for now due to SDK compatibility issues
+        # The frontend will detect workflow JSON in messages and load it to canvas
+        self._mcp_server = None
 
-        logger.debug(f"Custom tools configured: {[t.get('name') for t in tools]}")
+        logger.info(f"Configured {len(tools)} ComfyUI tools for agent")
 
     def _create_mcp_server(self, tools: List[Dict[str, Any]], executor: Callable):
         """
