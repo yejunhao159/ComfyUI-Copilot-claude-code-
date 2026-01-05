@@ -316,8 +316,12 @@ async def chat_streaming_handler(request: web.Request) -> web.StreamResponse:
         event_queue = asyncio.Queue()
 
         # Subscribe to events for this agent
+        # Only receive broadcastable events (from BusPresenter) to avoid duplicates
+        # Environment events are received by BusDriver and forwarded to BusPresenter
         def on_event(event: SystemEvent):
-            if event.context and event.context.agent_id == agent.agent_id:
+            if (event.context and
+                event.context.agent_id == agent.agent_id and
+                event.broadcastable):
                 try:
                     event_queue.put_nowait(event)
                 except asyncio.QueueFull:
@@ -349,7 +353,13 @@ async def chat_streaming_handler(request: web.Request) -> web.StreamResponse:
                             done = True
 
                     elif event.type == "text_delta":
-                        text = event.data.get("text", "") if isinstance(event.data, dict) else ""
+                        # event.data can be TextDeltaData or dict
+                        if hasattr(event.data, "text"):
+                            text = event.data.text
+                        elif isinstance(event.data, dict):
+                            text = event.data.get("text", "")
+                        else:
+                            text = ""
                         accumulated_text += text
                         await send_event("text", {"content": text})
 
@@ -455,7 +465,11 @@ async def send_message_handler(request: web.Request) -> web.Response:
         def on_event(event: SystemEvent):
             nonlocal accumulated_text, executed_tools, error_message
 
-            if event.context and event.context.agent_id != agent.agent_id:
+            # Only receive broadcastable events to avoid duplicates
+            # Environment events (broadcastable=False) are forwarded by BusPresenter as broadcastable=True
+            if not (event.context and
+                    event.context.agent_id == agent.agent_id and
+                    event.broadcastable):
                 return
 
             if event.type == "text_delta":

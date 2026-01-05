@@ -438,6 +438,9 @@ class RuntimeAgent:
             on_stream_complete=self._handle_stream_complete,
         )
 
+        # Completion tracking
+        self._pending_completion: Optional[asyncio.Event] = None
+
         self._lifecycle = AgentLifecycle.RUNNING
         logger.info(
             "RuntimeAgent created",
@@ -462,7 +465,7 @@ class RuntimeAgent:
         """Get session."""
         return self._session
 
-    async def receive(self, content: str, request_id: Optional[str] = None) -> None:
+    async def receive(self, content: str, request_id: Optional[str] = None, wait_for_complete: bool = True) -> None:
         """
         Send a message to the agent.
 
@@ -472,9 +475,15 @@ class RuntimeAgent:
         Args:
             content: User message content
             request_id: Optional request ID for correlation
+            wait_for_complete: If True, wait for the agent to finish processing
         """
         if self._lifecycle != AgentLifecycle.RUNNING:
             raise RuntimeError(f"Cannot send message to {self._lifecycle.value} agent")
+
+        # Create completion event if waiting
+        completion_event = asyncio.Event() if wait_for_complete else None
+        if completion_event:
+            self._pending_completion = completion_event
 
         # Update state
         self._state = AgentState.THINKING
@@ -485,6 +494,16 @@ class RuntimeAgent:
             content,
             request_id or f"req_{uuid.uuid4().hex[:8]}",
         )
+
+        # Wait for completion if requested
+        if completion_event:
+            try:
+                # Wait up to 5 minutes for completion
+                await asyncio.wait_for(completion_event.wait(), timeout=300)
+            except asyncio.TimeoutError:
+                logger.warning(f"Agent receive timeout after 300s", agent_id=self.agent_id)
+            finally:
+                self._pending_completion = None
 
     def interrupt(self, request_id: Optional[str] = None) -> None:
         """Interrupt current operation."""
@@ -541,6 +560,10 @@ class RuntimeAgent:
         """Handle stream completion."""
         logger.debug(f"Stream complete: {reason}")
         self._state = AgentState.IDLE
+
+        # Signal completion to unblock receive()
+        if self._pending_completion:
+            self._pending_completion.set()
 
     def _emit_state_change(self) -> None:
         """Emit state change event."""

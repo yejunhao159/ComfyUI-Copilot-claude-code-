@@ -1,30 +1,30 @@
 """
-ClaudeEnvironment - Claude SDK Integration via Receptor/Effector Pattern
+ClaudeEnvironment - Anthropic SDK Integration via Receptor/Effector Pattern
 
 Ported from @agentxjs/runtime/src/environment/
 
-This module integrates with the official claude-agent-sdk Python package
-to provide true Agentic Loop capability.
+This module integrates with the official anthropic Python SDK
+to provide Agentic Loop capability with tool execution.
 
 Architecture:
     ClaudeEnvironment
-    ├── ClaudeReceptor (in) - Perceives Claude SDK responses → emits to SystemBus
-    └── ClaudeEffector (out) - Subscribes to SystemBus → sends to Claude SDK
+    ├── ClaudeReceptor (in) - Perceives API responses → emits to SystemBus
+    └── ClaudeEffector (out) - Subscribes to SystemBus → sends to Anthropic API
 
-The key insight is that claude-agent-sdk handles the Agentic Loop internally:
-    1. Gather Context (tools, previous messages)
-    2. Take Action (call tools)
-    3. Verify Work (analyze results)
-    4. Repeat until task complete
-
-We don't need to manually loop - the SDK does it for us!
+The Agentic Loop is implemented manually:
+    1. Send message to Claude
+    2. If Claude wants to use tools → execute tools → send results back
+    3. Repeat until Claude returns end_turn (no more tool calls)
 """
 
 import asyncio
+import json
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Callable, AsyncIterator
+
+import anthropic
 
 from .system_bus import SystemBusProducer, SystemBusConsumer, SystemBus
 from .types import (
@@ -376,23 +376,50 @@ class ClaudeEffectorConfig:
 
 class ClaudeEffector(Effector):
     """
-    ClaudeEffector - Listens to SystemBus and sends to Claude SDK.
+    ClaudeEffector - Listens to SystemBus and sends to Anthropic API.
 
-    Uses claude-agent-sdk to handle the Agentic Loop automatically.
+    Uses the anthropic SDK directly with manual Agentic Loop implementation.
 
-    Important: The SDK handles tool execution internally!
-    We just need to:
-    1. Listen for user_message events
-    2. Pass to SDK query()
-    3. Forward stream events to Receptor
+    The Agentic Loop:
+    1. Send message to Claude with available tools
+    2. If Claude wants to use tools → execute tools → send results back
+    3. Repeat until Claude returns end_turn (no more tool calls)
     """
+
+    # Maximum number of agentic loop iterations to prevent infinite loops
+    MAX_ITERATIONS = 20
 
     def __init__(self, config: ClaudeEffectorConfig, receptor: ClaudeReceptor):
         self.config = config
         self.receptor = receptor
-        self._is_initialized = False
+        self._client: Optional[anthropic.AsyncAnthropic] = None
         self._current_task: Optional[asyncio.Task] = None
         self._current_meta: Optional[ReceptorMeta] = None
+        self._conversation_history: List[Dict[str, Any]] = []
+        self._tools: List[Dict[str, Any]] = []
+        self._tool_executor: Optional[Callable] = None
+
+    def set_tools(self, tools: List[Dict[str, Any]], executor: Callable) -> None:
+        """
+        Set available tools and their executor.
+
+        Args:
+            tools: List of tool definitions in Anthropic format
+            executor: Async function to execute tools: (tool_name, tool_input) -> result
+        """
+        self._tools = tools
+        self._tool_executor = executor
+        logger.debug(f"Tools configured: {[t.get('name') for t in tools]}")
+
+    def _get_client(self) -> anthropic.AsyncAnthropic:
+        """Get or create Anthropic client."""
+        if not self._client:
+            self._client = anthropic.AsyncAnthropic(
+                api_key=self.config.api_key,
+                base_url=self.config.base_url,
+                timeout=self.config.timeout / 1000,  # Convert ms to seconds
+            )
+        return self._client
 
     def connect(self, consumer: SystemBusConsumer) -> None:
         """Connect to SystemBus consumer."""
@@ -438,46 +465,16 @@ class ClaudeEffector(Effector):
 
     async def _send(self, message: Any, meta: ReceptorMeta) -> None:
         """
-        Send message to Claude SDK and process responses.
+        Send message to Anthropic API and implement Agentic Loop.
 
-        This is where the magic happens - the SDK handles the Agentic Loop!
-
-        The SDK returns different message types:
-        - StreamEvent: Contains raw Claude API streaming events in `event` dict
-        - AssistantMessage: Complete assistant response with content blocks
-        - ResultMessage: Final result with stats (is_error, session_id, etc.)
-        - UserMessage: User input echo
-        - SystemMessage: System information
+        This implements the full agentic loop:
+        1. Send user message to Claude
+        2. Stream the response
+        3. If tool_use blocks are present, execute tools and continue
+        4. Repeat until end_turn
         """
         try:
-            # Dynamic import to avoid hard dependency
-            from claude_agent_sdk import (
-                query,
-                ClaudeAgentOptions,
-                ResultMessage,
-                AssistantMessage,
-            )
-            from claude_agent_sdk.types import StreamEvent
-
-            # Build options
-            options = ClaudeAgentOptions(
-                model=self.config.model,
-                system_prompt=self.config.system_prompt,
-                cwd=self.config.cwd,
-                permission_mode="bypassPermissions",  # Agent runs autonomously
-            )
-
-            # Add MCP servers if configured
-            if self.config.mcp_servers:
-                options.mcp_servers = self.config.mcp_servers
-
-            # Add allowed tools if configured
-            if self.config.allowed_tools:
-                options.allowed_tools = self.config.allowed_tools
-
-            # Resume session if available
-            if self.config.resume_session_id:
-                options.resume = self.config.resume_session_id
+            client = self._get_client()
 
             # Extract prompt text
             if isinstance(message, dict):
@@ -487,81 +484,248 @@ class ClaudeEffector(Effector):
             else:
                 prompt = str(message)
 
+            # Add user message to history
+            self._conversation_history.append({
+                "role": "user",
+                "content": prompt,
+            })
+
             logger.info(
-                "Sending to Claude SDK",
+                "Sending to Anthropic API",
                 prompt_preview=prompt[:80],
                 model=self.config.model,
                 agent_id=self.config.agent_id,
             )
 
-            # Query Claude - the SDK handles the entire Agentic Loop!
-            async for sdk_msg in query(prompt=prompt, options=options):
-                msg_type = type(sdk_msg).__name__
-                logger.debug("SDK message received", msg_type=msg_type, agent_id=self.config.agent_id)
+            # Agentic Loop
+            iteration = 0
+            while iteration < self.MAX_ITERATIONS:
+                iteration += 1
+                logger.debug(f"Agentic loop iteration {iteration}", agent_id=self.config.agent_id)
 
-                # Handle StreamEvent - contains raw Claude API events
-                if isinstance(sdk_msg, StreamEvent):
-                    # StreamEvent has an `event` dict with the raw API event
-                    event_data = sdk_msg.event
-                    self.receptor.feed(event_data, meta)
+                # Build request parameters
+                params = {
+                    "model": self.config.model or "claude-sonnet-4-20250514",
+                    "max_tokens": 4096,
+                    "messages": self._conversation_history,
+                }
 
-                    # Capture session ID
-                    if sdk_msg.session_id and self.config.on_session_id_captured:
-                        self.config.on_session_id_captured(sdk_msg.session_id)
+                # Add system prompt if configured
+                if self.config.system_prompt:
+                    params["system"] = self.config.system_prompt
 
-                # Handle ResultMessage - final result
-                elif isinstance(sdk_msg, ResultMessage):
+                # Add tools if configured
+                if self._tools:
+                    params["tools"] = self._tools
+
+                # Stream the response
+                tool_use_blocks = []
+                assistant_content = []
+
+                async with client.messages.stream(**params) as stream:
+                    async for event in stream:
+                        # Convert to dict format for receptor
+                        event_dict = self._event_to_dict(event)
+                        if event_dict:
+                            self.receptor.feed(event_dict, meta)
+
+                        # Track tool use blocks
+                        if event.type == "content_block_start":
+                            if hasattr(event, "content_block") and event.content_block.type == "tool_use":
+                                tool_use_blocks.append({
+                                    "type": "tool_use",
+                                    "id": event.content_block.id,
+                                    "name": event.content_block.name,
+                                    "input": {},
+                                })
+
+                    # Get final message
+                    final_message = await stream.get_final_message()
+
+                # Process final message content
+                for block in final_message.content:
+                    if block.type == "text":
+                        assistant_content.append({
+                            "type": "text",
+                            "text": block.text,
+                        })
+                    elif block.type == "tool_use":
+                        assistant_content.append({
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        })
+                        # Update tool_use_blocks with actual input
+                        for tb in tool_use_blocks:
+                            if tb["id"] == block.id:
+                                tb["input"] = block.input
+
+                # Add assistant message to history
+                self._conversation_history.append({
+                    "role": "assistant",
+                    "content": assistant_content,
+                })
+
+                # Check stop reason
+                if final_message.stop_reason == "end_turn":
                     logger.info(
-                        "SDK query complete",
+                        "Agentic loop complete (end_turn)",
+                        iterations=iteration,
                         agent_id=self.config.agent_id,
-                        is_error=sdk_msg.is_error,
-                        num_turns=sdk_msg.num_turns,
-                        duration_ms=sdk_msg.duration_ms,
                     )
+                    break
 
-                    if sdk_msg.is_error:
-                        self.receptor.emit_error(
-                            sdk_msg.result or "Unknown error",
-                            "sdk_error",
-                            meta
-                        )
+                elif final_message.stop_reason == "tool_use":
+                    # Execute tools and continue loop
+                    if not self._tool_executor:
+                        logger.warning("Tool use requested but no executor configured")
+                        break
 
-                    # Capture session ID
-                    if sdk_msg.session_id and self.config.on_session_id_captured:
-                        self.config.on_session_id_captured(sdk_msg.session_id)
+                    tool_results = []
+                    for block in final_message.content:
+                        if block.type == "tool_use":
+                            logger.info(
+                                f"Executing tool: {block.name}",
+                                tool_id=block.id,
+                                agent_id=self.config.agent_id,
+                            )
 
-                # Handle AssistantMessage - process content blocks for tool use info
-                elif isinstance(sdk_msg, AssistantMessage):
-                    # Content blocks can contain TextBlock, ToolUseBlock, etc.
-                    for block in sdk_msg.content:
-                        block_type = type(block).__name__
-                        logger.debug(
-                            "Processing content block",
-                            block_type=block_type,
-                            agent_id=self.config.agent_id,
-                        )
+                            try:
+                                result = await self._tool_executor(block.name, block.input)
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "content": json.dumps(result) if not isinstance(result, str) else result,
+                                })
+
+                                # Emit tool result event
+                                self.receptor.feed({
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "tool_name": block.name,
+                                    "result": result,
+                                }, meta)
+
+                            except Exception as e:
+                                logger.exception(f"Tool execution failed: {block.name}")
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "content": f"Error: {str(e)}",
+                                    "is_error": True,
+                                })
+
+                    # Add tool results to history
+                    self._conversation_history.append({
+                        "role": "user",
+                        "content": tool_results,
+                    })
+
+                else:
+                    # Unknown stop reason, exit loop
+                    logger.warning(
+                        f"Unknown stop reason: {final_message.stop_reason}",
+                        agent_id=self.config.agent_id,
+                    )
+                    break
+
+            if iteration >= self.MAX_ITERATIONS:
+                logger.warning(
+                    f"Agentic loop reached max iterations ({self.MAX_ITERATIONS})",
+                    agent_id=self.config.agent_id,
+                )
 
         except asyncio.CancelledError:
             logger.debug("Query cancelled (user interrupt)", agent_id=self.config.agent_id)
             raise
 
-        except ImportError:
-            error_msg = "claude-agent-sdk not installed. Install with: pip install claude-agent-sdk"
-            logger.error(error_msg, agent_id=self.config.agent_id)
-            self.receptor.emit_error(error_msg, "missing_dependency", meta)
+        except anthropic.APIError as e:
+            logger.exception(
+                "Anthropic API error",
+                agent_id=self.config.agent_id,
+                error=str(e),
+            )
+            self.receptor.emit_error(str(e), "api_error", meta)
 
         except Exception as e:
             logger.exception(
-                "Error in Claude SDK query",
+                "Error in Anthropic API query",
                 agent_id=self.config.agent_id,
                 error=str(e),
             )
             self.receptor.emit_error(str(e), "runtime_error", meta)
 
+    def _event_to_dict(self, event: Any) -> Optional[Dict[str, Any]]:
+        """Convert anthropic stream event to dict format for receptor."""
+        event_type = event.type
+
+        if event_type == "message_start":
+            return {
+                "type": "message_start",
+                "message": {
+                    "id": event.message.id if hasattr(event, "message") else "",
+                    "model": event.message.model if hasattr(event, "message") else "",
+                },
+            }
+
+        elif event_type == "content_block_start":
+            block = event.content_block
+            return {
+                "type": "content_block_start",
+                "index": event.index,
+                "content_block": {
+                    "type": block.type,
+                    "id": getattr(block, "id", None),
+                    "name": getattr(block, "name", None),
+                },
+            }
+
+        elif event_type == "content_block_delta":
+            delta = event.delta
+            delta_dict = {"type": delta.type}
+            if delta.type == "text_delta":
+                delta_dict["text"] = delta.text
+            elif delta.type == "input_json_delta":
+                delta_dict["partial_json"] = delta.partial_json
+            return {
+                "type": "content_block_delta",
+                "index": event.index,
+                "delta": delta_dict,
+            }
+
+        elif event_type == "content_block_stop":
+            return {
+                "type": "content_block_stop",
+                "index": event.index,
+            }
+
+        elif event_type == "message_delta":
+            return {
+                "type": "message_delta",
+                "delta": {
+                    "stop_reason": event.delta.stop_reason if hasattr(event.delta, "stop_reason") else None,
+                },
+            }
+
+        elif event_type == "message_stop":
+            return {
+                "type": "message_stop",
+            }
+
+        return None
+
+    def clear_history(self) -> None:
+        """Clear conversation history."""
+        self._conversation_history = []
+
     def dispose(self) -> None:
         """Clean up resources."""
         if self._current_task and not self._current_task.done():
             self._current_task.cancel()
+        if self._client:
+            # Note: AsyncAnthropic doesn't have explicit close
+            self._client = None
         logger.debug("ClaudeEffector disposed")
 
 
