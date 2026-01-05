@@ -30,6 +30,7 @@ from .types import AgentSession, SessionState
 from .agent import RuntimeAgent, AgentConfig
 
 from ...utils.logger import get_logger
+from ..mcp_tools.comfyui_tools import get_comfyui_tools, execute_comfyui_tool
 
 logger = get_logger(__name__)
 
@@ -180,6 +181,11 @@ class RuntimeContainer:
 
             # Create agent
             agent = RuntimeAgent(config, self._bus, session)
+
+            # Configure ComfyUI tools
+            tools = get_comfyui_tools()
+            agent._environment.effector.set_tools(tools, execute_comfyui_tool)
+            logger.info(f"Configured {len(tools)} ComfyUI tools for agent {agent_id}")
 
             # Track
             self._agents[agent_id] = agent
