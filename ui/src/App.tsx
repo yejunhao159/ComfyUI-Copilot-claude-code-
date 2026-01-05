@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-// ============================================
+// ============================================ 
 // Types
-// ============================================
+// ============================================ 
 
 interface ToolCall {
   id: string
@@ -48,102 +48,16 @@ interface Session {
   state: string
 }
 
-interface LogEntry {
-  timestamp: string
-  level: string
-  location: string
-  message: string
-  context: string
-  raw: string
-}
-
-// ============================================
+// ============================================ 
 // Constants
-// ============================================
+// ============================================ 
 
 const API_BASE = '/api/agentx'
-
-const TOOL_CATEGORIES: Record<string, { category: string; color: string; icon: string; bgColor: string }> = {
-  get_workflow: { category: 'Workflow', color: 'text-blue-700', icon: '📋', bgColor: 'bg-blue-100' },
-  update_workflow: { category: 'Workflow', color: 'text-blue-700', icon: '📝', bgColor: 'bg-blue-100' },
-  clear_workflow: { category: 'Workflow', color: 'text-blue-700', icon: '🗑️', bgColor: 'bg-blue-100' },
-  add_node: { category: 'Node', color: 'text-green-700', icon: '➕', bgColor: 'bg-green-100' },
-  remove_node: { category: 'Node', color: 'text-green-700', icon: '➖', bgColor: 'bg-green-100' },
-  modify_node: { category: 'Node', color: 'text-green-700', icon: '✏️', bgColor: 'bg-green-100' },
-  connect_nodes: { category: 'Connection', color: 'text-purple-700', icon: '🔗', bgColor: 'bg-purple-100' },
-  disconnect_input: { category: 'Connection', color: 'text-purple-700', icon: '✂️', bgColor: 'bg-purple-100' },
-  search_nodes: { category: 'Search', color: 'text-amber-700', icon: '🔍', bgColor: 'bg-amber-100' },
-  get_node_info: { category: 'Search', color: 'text-amber-700', icon: 'ℹ️', bgColor: 'bg-amber-100' },
-  list_node_categories: { category: 'Search', color: 'text-amber-700', icon: '📂', bgColor: 'bg-amber-100' },
-  execute_workflow: { category: 'Execution', color: 'text-red-700', icon: '▶️', bgColor: 'bg-red-100' },
-  get_execution_result: { category: 'Execution', color: 'text-red-700', icon: '📊', bgColor: 'bg-red-100' },
-  interrupt_execution: { category: 'Execution', color: 'text-red-700', icon: '⏹️', bgColor: 'bg-red-100' },
-  get_execution_logs: { category: 'Execution', color: 'text-red-700', icon: '📜', bgColor: 'bg-red-100' },
-  monitor_execution: { category: 'Execution', color: 'text-red-700', icon: '👁️', bgColor: 'bg-red-100' },
-  execute_and_monitor: { category: 'Execution', color: 'text-red-700', icon: '🎬', bgColor: 'bg-red-100' },
-  validate_workflow: { category: 'Validation', color: 'text-teal-700', icon: '✅', bgColor: 'bg-teal-100' },
-  analyze_workflow: { category: 'Validation', color: 'text-teal-700', icon: '📈', bgColor: 'bg-teal-100' },
-  get_execution_images: { category: 'Image', color: 'text-pink-700', icon: '🖼️', bgColor: 'bg-pink-100' },
-  get_latest_images: { category: 'Image', color: 'text-pink-700', icon: '📸', bgColor: 'bg-pink-100' },
-  save_workflow_template: { category: 'Template', color: 'text-indigo-700', icon: '💾', bgColor: 'bg-indigo-100' },
-  load_workflow_template: { category: 'Template', color: 'text-indigo-700', icon: '📥', bgColor: 'bg-indigo-100' },
-  list_workflow_templates: { category: 'Template', color: 'text-indigo-700', icon: '📚', bgColor: 'bg-indigo-100' },
-  delete_workflow_template: { category: 'Template', color: 'text-indigo-700', icon: '🗑️', bgColor: 'bg-indigo-100' },
-  list_models: { category: 'System', color: 'text-slate-700', icon: '🤖', bgColor: 'bg-slate-100' },
-  get_system_stats: { category: 'System', color: 'text-slate-700', icon: '📊', bgColor: 'bg-slate-100' },
-  get_comfyui_info: { category: 'System', color: 'text-slate-700', icon: '⚙️', bgColor: 'bg-slate-100' },
-  clear_queue: { category: 'System', color: 'text-slate-700', icon: '🧹', bgColor: 'bg-slate-100' },
-}
 
 const SYSTEM_PROMPT = `You are AgentX, an expert AI assistant for ComfyUI workflows.
 
 ## Available Tools
-You have access to 26 ComfyUI tools in these categories:
-
-### Workflow Tools
-- get_workflow: Get current workflow
-- update_workflow: Update/create entire workflow
-- clear_workflow: Clear current workflow
-
-### Node Tools
-- add_node: Add a node to workflow
-- remove_node: Remove a node
-- modify_node: Modify node parameters
-- connect_nodes: Connect two nodes
-- disconnect_input: Disconnect an input
-
-### Search Tools
-- search_nodes: Search for nodes by keywords
-- get_node_info: Get detailed node information
-- list_node_categories: List all node categories
-
-### Execution Tools
-- execute_workflow: Execute the workflow
-- get_execution_result: Get execution result
-- interrupt_execution: Stop execution
-- get_execution_logs: Get detailed execution logs (node timing, progress, errors)
-- monitor_execution: Monitor execution in real-time via WebSocket
-- execute_and_monitor: Execute and monitor in one call (recommended)
-
-### Validation Tools
-- validate_workflow: Validate workflow integrity
-- analyze_workflow: Analyze workflow structure
-
-### Image Tools
-- get_execution_images: Get images from execution
-- get_latest_images: Get recent images
-
-### Template Tools
-- save_workflow_template: Save as template
-- load_workflow_template: Load template
-- list_workflow_templates: List templates
-- delete_workflow_template: Delete template
-
-### System Tools
-- list_models: List available models
-- get_system_stats: Get system status
-- get_comfyui_info: Get ComfyUI info
-- clear_queue: Clear queue
+You have access to 26 ComfyUI tools.
 
 ## Rules
 1. When asked to CREATE a workflow, use update_workflow immediately
@@ -151,87 +65,112 @@ You have access to 26 ComfyUI tools in these categories:
 3. Use analyze_workflow to provide suggestions
 4. Always show what tools you're using`
 
-// ============================================
+// ============================================ 
 // Utility Functions
-// ============================================
-
-function getToolMeta(toolName: string) {
-  return TOOL_CATEGORIES[toolName] || { category: 'Other', color: 'text-gray-700', icon: '🔧', bgColor: 'bg-gray-100' }
-}
+// ============================================ 
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 15)
 }
 
-// ============================================
+function cleanContent(content: string): string {
+  if (!content) return ''
+  let cleaned = content.replace(/<think>[\s\S]*?<\/think>/gi, '')
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
+  return cleaned.trim()
+}
+
+// ============================================ 
 // Components
-// ============================================
+// ============================================ 
 
-function ToolCallCard({ tool, defaultExpanded = false }: { tool: ToolCall; defaultExpanded?: boolean }) {
-  const [expanded, setExpanded] = useState(defaultExpanded)
-  const meta = getToolMeta(tool.name)
+const UserIcon = () => (
+  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 flex-shrink-0">
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+    </svg>
+  </div>
+)
 
-  const statusConfig = {
-    pending: { icon: '⏳', text: 'Pending', color: 'text-gray-500' },
-    executing: { icon: '⚡', text: 'Executing...', color: 'text-blue-500 animate-pulse' },
-    success: { icon: '✓', text: 'Success', color: 'text-green-600' },
-    error: { icon: '✗', text: 'Error', color: 'text-red-600' },
+const AssistantIcon = () => (
+  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white flex-shrink-0 shadow-sm">
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+    </svg>
+  </div>
+)
+
+function ToolCallCard({ tool }: { tool: ToolCall }) {
+  const [expanded, setExpanded] = useState(false)
+  
+  const statusColors = {
+    pending: 'bg-gray-50 text-gray-400 border-gray-100',
+    executing: 'bg-blue-50/50 text-blue-500 border-blue-100 animate-pulse',
+    success: 'bg-emerald-50/50 text-emerald-600 border-emerald-100',
+    error: 'bg-rose-50/50 text-rose-600 border-rose-100',
+  }
+  
+  const statusIcons = {
+    pending: '⌛',
+    executing: '⚡',
+    success: '✨',
+    error: '❌',
   }
 
-  const status = statusConfig[tool.status]
-
   return (
-    <div className="my-2 border rounded-lg overflow-hidden bg-white shadow-sm">
-      <div
-        className="flex items-center justify-between p-3 cursor-pointer hover:bg-gray-50 transition-colors"
+    <div className={`my-3 text-xs border rounded-xl overflow-hidden transition-all duration-200 ${statusColors[tool.status]}`}>
+      <div 
+        className="flex items-center justify-between px-4 py-2.5 cursor-pointer hover:bg-black/5"
         onClick={() => setExpanded(!expanded)}
       >
-        <div className="flex items-center gap-2">
-          <span className="text-lg">{meta.icon}</span>
-          <span className="font-medium text-sm">{tool.name}</span>
-          <span className={`px-2 py-0.5 rounded text-xs font-medium ${meta.bgColor} ${meta.color}`}>
-            {meta.category}
-          </span>
+        <div className="flex items-center gap-3 font-medium">
+          <span className="text-sm">{statusIcons[tool.status]}</span>
+          <span className="opacity-70 font-semibold tracking-wider text-[10px] uppercase">Action</span>
+          <span className="font-mono text-[11px] px-1.5 py-0.5 bg-black/5 rounded">{tool.name}</span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className={`text-sm ${status.color}`}>
-            {status.icon} {status.text}
-          </span>
-          {tool.duration !== undefined && (
-            <span className="text-xs text-gray-400">{(tool.duration / 1000).toFixed(2)}s</span>
-          )}
-          <span className="text-gray-400 text-sm transition-transform" style={{ transform: expanded ? 'rotate(180deg)' : 'none' }}>
-            ▼
-          </span>
+        <div className="flex items-center gap-3">
+          {tool.duration && <span className="opacity-40 font-mono">{(tool.duration / 1000).toFixed(2)}s</span>}
+          <svg className={`w-3 h-3 transition-transform duration-200 opacity-40 ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
         </div>
       </div>
 
       {expanded && (
-        <div className="border-t p-3 space-y-3 bg-gray-50">
-          <div>
-            <div className="text-xs text-gray-500 mb-1 font-medium">Input:</div>
-            <pre className="text-xs bg-white p-2 rounded border overflow-x-auto max-h-32 overflow-y-auto">
-              {JSON.stringify(tool.arguments, null, 2)}
-            </pre>
+        <div className="p-4 border-t border-inherit bg-white/40 backdrop-blur-sm">
+          <div className="space-y-3">
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="w-1 h-3 bg-blue-400 rounded-full" />
+                <span className="font-bold opacity-60 text-[10px] uppercase tracking-wider">Input Parameters</span>
+              </div>
+              <pre className="overflow-x-auto p-3 rounded-lg bg-gray-900 text-gray-300 font-mono text-[11px] leading-relaxed border border-gray-800 shadow-inner">
+                {JSON.stringify(tool.arguments, null, 2)}
+              </pre>
+            </div>
+            {tool.result && (
+              <div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-1 h-3 bg-emerald-400 rounded-full" />
+                  <span className="font-bold opacity-60 text-[10px] uppercase tracking-wider">Result Output</span>
+                </div>
+                <pre className="overflow-x-auto p-3 rounded-lg bg-gray-900 text-gray-300 font-mono text-[11px] leading-relaxed border border-gray-800 shadow-inner max-h-80">
+                  {JSON.stringify(tool.result, null, 2)}
+                </pre>
+              </div>
+            )}
+            {tool.error && (
+              <div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-1 h-3 bg-rose-400 rounded-full" />
+                  <span className="font-bold text-rose-500 text-[10px] uppercase tracking-wider">Execution Error</span>
+                </div>
+                <pre className="overflow-x-auto p-3 rounded-lg bg-rose-900/20 text-rose-200 font-mono text-[11px] border border-rose-500/20 shadow-inner">
+                  {tool.error}
+                </pre>
+              </div>
+            )}
           </div>
-
-          {tool.result !== undefined && (
-            <div>
-              <div className="text-xs text-gray-500 mb-1 font-medium">Output:</div>
-              <pre className="text-xs bg-green-50 p-2 rounded border border-green-200 overflow-x-auto max-h-48 overflow-y-auto">
-                {JSON.stringify(tool.result, null, 2)}
-              </pre>
-            </div>
-          )}
-
-          {tool.error && (
-            <div>
-              <div className="text-xs text-gray-500 mb-1 font-medium">Error:</div>
-              <pre className="text-xs bg-red-50 text-red-700 p-2 rounded border border-red-200">
-                {tool.error}
-              </pre>
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -239,8 +178,10 @@ function ToolCallCard({ tool, defaultExpanded = false }: { tool: ToolCall; defau
 }
 
 function MarkdownContent({ content }: { content: string }) {
+  const cleaned = cleanContent(content)
+  
   return (
-    <div className="prose prose-sm max-w-none dark:prose-invert">
+    <div className="prose prose-sm max-w-none text-gray-700 dark:text-gray-300 leading-relaxed space-y-2">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -248,117 +189,117 @@ function MarkdownContent({ content }: { content: string }) {
             const isInline = !className
             if (isInline) {
               return (
-                <code className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-800 text-sm" {...props}>
+                <code className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-indigo-600 dark:text-indigo-400 font-mono text-[0.9em] border border-black/5" {...props}>
                   {children}
                 </code>
               )
             }
             return (
-              <pre className="bg-gray-900 text-gray-100 p-3 rounded-lg overflow-x-auto">
-                <code className={className} {...props}>
-                  {children}
-                </code>
-              </pre>
+              <div className="relative group my-4 rounded-xl overflow-hidden border border-gray-800 shadow-xl">
+                <div className="bg-gray-800/50 px-4 py-2 text-[10px] text-gray-400 border-b border-gray-800 flex justify-between items-center">
+                  <span className="font-mono uppercase tracking-widest">{className?.replace('language-', '') || 'code'}</span>
+                </div>
+                <pre className="bg-gray-900 text-gray-300 p-5 overflow-x-auto font-mono text-[13px] leading-relaxed scrollbar-thin scrollbar-thumb-gray-700">
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                </pre>
+              </div>
             )
           },
-          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-          ul: ({ children }) => <ul className="list-disc pl-4 mb-2">{children}</ul>,
-          ol: ({ children }) => <ol className="list-decimal pl-4 mb-2">{children}</ol>,
-          li: ({ children }) => <li className="mb-1">{children}</li>,
-          h1: ({ children }) => <h1 className="text-xl font-bold mt-4 mb-2">{children}</h1>,
-          h2: ({ children }) => <h2 className="text-lg font-bold mt-3 mb-2">{children}</h2>,
-          h3: ({ children }) => <h3 className="text-base font-bold mt-2 mb-1">{children}</h3>,
+          p: ({ children }) => <p className="mb-4 last:mb-0 text-[14.5px] leading-7">{children}</p>,
+          ul: ({ children }) => <ul className="list-disc pl-6 mb-4 space-y-2 text-[14.5px]">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal pl-6 mb-4 space-y-2 text-[14.5px]">{children}</ol>,
+          h1: ({ children }) => <h3 className="text-xl font-bold mt-8 mb-4 text-gray-900 dark:text-white border-b border-black/5 pb-2">{children}</h3>,
+          h2: ({ children }) => <h4 className="text-lg font-bold mt-6 mb-3 text-gray-800 dark:text-gray-100">{children}</h4>,
+          h3: ({ children }) => <h5 className="text-base font-bold mt-5 mb-2 text-gray-700 dark:text-gray-200 uppercase tracking-wide">{children}</h5>,
           blockquote: ({ children }) => (
-            <blockquote className="border-l-4 border-gray-300 pl-4 italic text-gray-600">
+            <blockquote className="border-l-4 border-indigo-400 pl-5 italic text-gray-600 dark:text-gray-400 my-6 bg-indigo-50/30 dark:bg-indigo-900/10 py-3 rounded-r-xl">
               {children}
             </blockquote>
           ),
           a: ({ href, children }) => (
-            <a href={href} className="text-blue-600 hover:underline" target="_blank" rel="noopener noreferrer">
+            <a href={href} className="text-blue-600 dark:text-blue-400 hover:text-blue-500 font-medium underline underline-offset-4 decoration-blue-500/30 transition-colors" target="_blank" rel="noopener noreferrer">
               {children}
             </a>
           ),
           table: ({ children }) => (
-            <div className="overflow-x-auto">
-              <table className="min-w-full border-collapse border border-gray-300">{children}</table>
+            <div className="overflow-hidden my-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-800 text-sm">{children}</table>
             </div>
           ),
           th: ({ children }) => (
-            <th className="border border-gray-300 px-3 py-2 bg-gray-100 font-medium">{children}</th>
+            <th className="px-4 py-3 bg-gray-50/80 dark:bg-gray-800/50 font-semibold text-left text-gray-900 dark:text-gray-100">{children}</th>
           ),
           td: ({ children }) => (
-            <td className="border border-gray-300 px-3 py-2">{children}</td>
+            <td className="px-4 py-3 border-t border-gray-100 dark:border-gray-800/50 bg-white/50 dark:bg-transparent">{children}</td>
           ),
         }}
       >
-        {content}
+        {cleaned}
       </ReactMarkdown>
     </div>
   )
-}
-
-function MessageBlock({ block, streamingText }: { block: Block; streamingText?: string }) {
-  if (block.type === 'text') {
-    const content = block.status === 'streaming' && streamingText ? streamingText : block.content
-    return <MarkdownContent content={content} />
-  }
-
-  if (block.type === 'tool') {
-    return <ToolCallCard tool={block.toolCall} />
-  }
-
-  return null
 }
 
 function MessageItem({ message, streamingText }: { message: Message; streamingText?: string }) {
   const isUser = message.role === 'user'
   const isError = message.role === 'error'
 
-  if (isUser) {
-    return (
-      <div className="flex justify-end">
-        <div className="max-w-3xl px-4 py-3 rounded-2xl bg-blue-600 text-white">
-          {message.content}
-        </div>
-      </div>
-    )
-  }
-
-  if (isError) {
-    return (
-      <div className="flex justify-start">
-        <div className="max-w-3xl px-4 py-3 rounded-2xl bg-red-50 border border-red-200 text-red-700">
-          {message.content}
-        </div>
-      </div>
-    )
-  }
-
-  // Assistant message with blocks
   return (
-    <div className="flex justify-start">
-      <div className="max-w-3xl w-full">
-        <div className="bg-white shadow-sm border rounded-2xl px-4 py-3">
-          {message.blocks?.map((block, idx) => (
-            <MessageBlock
-              key={block.id || idx}
-              block={block}
-              streamingText={block.type === 'text' && block.status === 'streaming' ? streamingText : undefined}
-            />
-          ))}
-
-          {/* Simple text content fallback */}
-          {!message.blocks?.length && message.content && (
-            <MarkdownContent content={message.content} />
-          )}
-
-          {/* Loading indicator for streaming */}
-          {message.status === 'streaming' && !message.blocks?.length && (
-            <div className="flex items-center gap-2 text-gray-400">
-              <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
-              <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-              <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+    <div className={`flex gap-4 mb-8 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+      {isUser ? <UserIcon /> : <AssistantIcon />}
+      
+      <div className={`max-w-[80%] min-w-0 flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
+        <div className={`px-5 py-3.5 rounded-2xl shadow-sm transition-all duration-300 ${ 
+          isUser 
+            ? 'bg-gradient-to-br from-indigo-600 to-blue-600 text-white rounded-tr-none' 
+            : isError
+              ? 'bg-rose-50 border border-rose-100 text-rose-700 rounded-tl-none'
+              : 'bg-white dark:bg-gray-800 border dark:border-gray-700/50 rounded-tl-none shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)]'
+        }`}>
+          {isUser ? (
+            <div className="whitespace-pre-wrap text-[15px] leading-relaxed">{message.content}</div>
+          ) : isError ? (
+            <div>
+              <div className="font-bold text-xs uppercase tracking-widest mb-1 opacity-70">Error</div>
+              <div className="text-[14px]">{message.content}</div>
             </div>
+          ) : (
+            <>
+              {message.blocks?.map((block, idx) => {
+                if (block.type === 'tool') {
+                  return <ToolCallCard key={block.id || idx} tool={block.toolCall} />
+                }
+                if (block.type === 'text') {
+                  const text = block.status === 'streaming' && streamingText ? streamingText : block.content
+                  return <MarkdownContent key={block.id || idx} content={text} />
+                }
+                return null
+              })}
+
+              {!message.blocks?.length && message.content && (
+                <MarkdownContent content={message.content} />
+              )}
+
+              {message.status === 'streaming' && !message.blocks?.length && (
+                <div className="flex items-center gap-1.5 py-3 px-2">
+                  <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                  <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                  <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <div className="mt-1.5 px-1 flex items-center gap-2">
+          <span className="text-[10px] text-gray-400 font-medium uppercase tracking-tighter">
+            {isUser ? 'You' : 'AgentX'}
+          </span>
+          {message.timestamp && (
+            <span className="text-[10px] text-gray-300">
+              {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
           )}
         </div>
       </div>
@@ -366,29 +307,66 @@ function MessageItem({ message, streamingText }: { message: Message; streamingTe
   )
 }
 
-function StatusIndicator({ status }: { status: 'idle' | 'connecting' | 'thinking' | 'responding' | 'calling_tool' | 'error' }) {
-  const config = {
-    idle: { text: 'Ready', color: 'bg-green-500' },
-    connecting: { text: 'Connecting...', color: 'bg-yellow-500 animate-pulse' },
-    thinking: { text: 'Thinking...', color: 'bg-blue-500 animate-pulse' },
-    responding: { text: 'Responding...', color: 'bg-blue-500 animate-pulse' },
-    calling_tool: { text: 'Calling tool...', color: 'bg-purple-500 animate-pulse' },
-    error: { text: 'Error', color: 'bg-red-500' },
-  }
-
-  const { text, color } = config[status]
-
+function Sidebar({ sessions, currentSession, onCreateSession, onSelectSession }: any) {
   return (
-    <div className="flex items-center gap-2 text-xs text-gray-500">
-      <div className={`w-2 h-2 rounded-full ${color}`} />
-      <span>{text}</span>
+    <div className="w-72 bg-[#0f111a] text-gray-400 flex flex-col border-r border-gray-800/50 flex-shrink-0">
+      <div className="p-6">
+        <div className="flex items-center gap-3 mb-8">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-blue-500 to-cyan-400 p-[1px] shadow-lg shadow-indigo-500/20">
+            <div className="w-full h-full rounded-[11px] bg-[#0f111a] flex items-center justify-center text-white">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
+          </div>
+          <div>
+            <h1 className="text-white font-bold text-base tracking-tight leading-none">AgentX</h1>
+            <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest">Copilot</span>
+          </div>
+        </div>
+        
+        <button
+          onClick={onCreateSession}
+          className="w-full py-3 px-4 bg-white/5 hover:bg-white/10 text-white rounded-xl transition-all duration-200 border border-white/5 font-semibold flex items-center justify-center gap-2.5 group active:scale-[0.98]"
+        >
+          <svg className="w-4 h-4 group-hover:rotate-90 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          New Chat
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-1.5 scrollbar-thin scrollbar-thumb-gray-800/50">
+        <div className="px-3 py-2 text-[10px] font-bold text-gray-600 uppercase tracking-[0.2em] mb-2">Recent Threads</div>
+        {sessions.map((session: Session) => (
+          <div
+            key={session.session_id}
+            onClick={() => onSelectSession(session.session_id)}
+            className={`group p-3 rounded-xl cursor-pointer transition-all duration-200 border ${ 
+              currentSession === session.session_id 
+                ? 'bg-indigo-600/10 text-white border-indigo-500/30 shadow-[0_0_20px_-5px_rgba(99,102,241,0.2)]' 
+                : 'hover:bg-white/5 text-gray-500 hover:text-gray-300 border-transparent'
+            }`}
+          >
+            <div className="font-semibold text-[13px] truncate leading-tight mb-1">
+              {session.title || 'Untitled Conversation'}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`w-1.5 h-1.5 rounded-full ${currentSession === session.session_id ? 'bg-indigo-400' : 'bg-gray-700'}`} />
+              <span className="text-[10px] opacity-60">
+                {new Date(session.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
-// ============================================
-// Main App Component
-// ============================================
+// ============================================ 
+// Main App
+// ============================================ 
 
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([])
@@ -402,21 +380,13 @@ export default function App() {
   const wsRef = useRef<WebSocket | null>(null)
   const currentAssistantMsgRef = useRef<string | null>(null)
 
-  // Auto scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, streamingText])
+  }, [messages, streamingText, status])
 
-  // Fetch sessions on mount
   useEffect(() => {
     fetchSessions()
-  }, [])
-
-  // Clean up WebSocket on unmount
-  useEffect(() => {
-    return () => {
-      wsRef.current?.close()
-    }
+    return () => wsRef.current?.close()
   }, [])
 
   const fetchSessions = async () => {
@@ -424,9 +394,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/sessions`)
       const data = await res.json()
       setSessions(data.sessions || [])
-    } catch (e) {
-      console.error('Failed to fetch sessions:', e)
-    }
+    } catch (e) { console.error(e) }
   }
 
   const createSession = async () => {
@@ -438,12 +406,8 @@ export default function App() {
       })
       const session = await res.json()
       setSessions(prev => [session, ...prev])
-      setCurrentSession(session.session_id)
-      setMessages([])
-      connectWebSocket(session.session_id)
-    } catch (e) {
-      console.error('Failed to create session:', e)
-    }
+      selectSession(session.session_id)
+    } catch (e) { console.error(e) }
   }
 
   const selectSession = async (sessionId: string) => {
@@ -474,7 +438,7 @@ export default function App() {
       }
       connectWebSocket(sessionId)
     } catch (e) {
-      console.error('Failed to fetch messages:', e)
+      console.error(e)
       setMessages([])
     }
   }
@@ -486,198 +450,108 @@ export default function App() {
     setStatus('connecting')
     const ws = new WebSocket(wsUrl)
 
-    ws.onopen = () => {
-      console.log('WebSocket connected')
-      setStatus('idle')
-    }
-
+    ws.onopen = () => { setStatus('idle') }
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
         handleWebSocketMessage(data)
-      } catch (e) {
-        console.error('Failed to parse WebSocket message:', e)
-      }
+      } catch (e) { console.error(e) }
     }
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error)
-      setStatus('error')
-    }
-
-    ws.onclose = () => {
-      console.log('WebSocket closed')
-      if (status !== 'error') {
-        setStatus('idle')
-      }
-    }
-
+    ws.onerror = () => setStatus('error')
+    ws.onclose = () => { if (status !== 'error') setStatus('idle') }
     wsRef.current = ws
   }, [status])
 
   const handleWebSocketMessage = useCallback((data: any) => {
     const { type } = data
 
-    switch (type) {
-      case 'state':
-        // Backend sends lowercase state values
-        const state = data.data?.state?.toLowerCase()
-        if (state === 'thinking') setStatus('thinking')
-        else if (state === 'responding') setStatus('responding')
-        else if (state === 'calling_tool') setStatus('calling_tool')
-        else if (state === 'done' || state === 'idle') setStatus('idle')
-        else if (state === 'error') setStatus('error')
-        break
+    if (type === 'state') {
+      const state = data.data?.state?.toLowerCase()
+      if (['thinking', 'responding', 'calling_tool'].includes(state)) setStatus(state)
+      else if (state === 'done' || state === 'idle') setStatus('idle')
+      else if (state === 'error') setStatus('error')
+      return
+    }
 
-      case 'stream':
-        // Streaming text delta
-        setStreamingText(prev => prev + data.data)
-        setMessages(prev => {
-          const msgId = currentAssistantMsgRef.current
-          if (!msgId) return prev
-
-          return prev.map(msg => {
-            if (msg.id !== msgId) return msg
-
-            const blocks = msg.blocks || []
-            const lastBlock = blocks[blocks.length - 1]
-
-            if (lastBlock?.type === 'text' && lastBlock.status === 'streaming') {
-              return {
-                ...msg,
-                blocks: blocks.map((b, i) =>
-                  i === blocks.length - 1 && b.type === 'text'
-                    ? { ...b, content: b.content + data.data }
-                    : b
-                )
-              }
-            }
-
+    if (type === 'stream') {
+      setStreamingText(prev => prev + data.data)
+      setMessages(prev => {
+        const msgId = currentAssistantMsgRef.current
+        if (!msgId) return prev
+        return prev.map(msg => {
+          if (msg.id !== msgId) return msg
+          const blocks = msg.blocks || []
+          const lastBlock = blocks[blocks.length - 1]
+          if (lastBlock?.type === 'text' && lastBlock.status === 'streaming') {
             return {
               ...msg,
-              blocks: [...blocks, {
-                id: generateId(),
-                type: 'text',
-                content: data.data,
-                status: 'streaming'
-              }]
+              blocks: blocks.map((b, i) => i === blocks.length - 1 ? { ...b, content: b.content + data.data } : b)
             }
-          })
+          }
+          return {
+            ...msg,
+            blocks: [...blocks, { id: generateId(), type: 'text', content: data.data, status: 'streaming' }]
+          }
         })
-        break
+      })
+      return
+    }
 
-      case 'tool_use':
-        // Tool call started
-        const toolUse = data.data
-        setMessages(prev => {
-          const msgId = currentAssistantMsgRef.current
-          if (!msgId) return prev
-
-          return prev.map(msg => {
-            if (msg.id !== msgId) return msg
-
-            // Complete any streaming text block
-            const blocks = (msg.blocks || []).map(b =>
-              b.type === 'text' && b.status === 'streaming'
-                ? { ...b, status: 'completed' as const }
-                : b
-            )
-
-            return {
-              ...msg,
-              blocks: [...blocks, {
-                id: generateId(),
-                type: 'tool',
-                toolCall: {
-                  id: toolUse.id,
-                  name: toolUse.name,
-                  arguments: toolUse.input,
-                  status: 'executing',
-                  startTime: Date.now()
-                }
-              }]
-            }
-          })
+    if (type === 'tool_use') {
+      const toolUse = data.data
+      setMessages(prev => {
+        const msgId = currentAssistantMsgRef.current
+        if (!msgId) return prev
+        return prev.map(msg => {
+          if (msg.id !== msgId) return msg
+          const blocks = (msg.blocks || []).map(b => b.type === 'text' && b.status === 'streaming' ? { ...b, status: 'completed' as const } : b)
+          return {
+            ...msg,
+            blocks: [...blocks, {
+              id: generateId(),
+              type: 'tool',
+              toolCall: { id: toolUse.id, name: toolUse.name, arguments: toolUse.input, status: 'executing', startTime: Date.now() }
+            }]
+          }
         })
-        setStreamingText('')
-        break
+      })
+      setStreamingText('')
+      return
+    }
 
-      case 'tool_result':
-        // Tool execution completed
-        const toolResult = data.data
-        setMessages(prev => {
-          const msgId = currentAssistantMsgRef.current
-          if (!msgId) return prev
-
-          return prev.map(msg => {
-            if (msg.id !== msgId) return msg
-
-            return {
-              ...msg,
-              blocks: msg.blocks?.map(b => {
-                if (b.type === 'tool' && b.toolCall.id === toolResult.tool_use_id) {
-                  const duration = b.toolCall.startTime ? Date.now() - b.toolCall.startTime : undefined
-                  return {
-                    ...b,
-                    toolCall: {
-                      ...b.toolCall,
-                      result: toolResult.content,
-                      status: toolResult.content?.error ? 'error' : 'success',
-                      duration
-                    }
+    if (type === 'tool_result') {
+      const toolResult = data.data
+      setMessages(prev => {
+        const msgId = currentAssistantMsgRef.current
+        if (!msgId) return prev
+        return prev.map(msg => {
+          if (msg.id !== msgId) return msg
+          return {
+            ...msg,
+            blocks: msg.blocks?.map(b => {
+              if (b.type === 'tool' && b.toolCall.id === toolResult.tool_use_id) {
+                return {
+                  ...b,
+                  toolCall: {
+                    ...b.toolCall,
+                    result: toolResult.content,
+                    status: toolResult.content?.error ? 'error' : 'success',
+                    duration: b.toolCall.startTime ? Date.now() - b.toolCall.startTime : undefined
                   }
                 }
-                return b
-              })
-            }
-          })
-        })
-        break
-
-      case 'message':
-        // Final message content
-        const messageContent = data.data?.content
-        if (messageContent) {
-          setMessages(prev => {
-            const msgId = currentAssistantMsgRef.current
-            if (!msgId) return prev
-
-            return prev.map(msg => {
-              if (msg.id !== msgId) return msg
-
-              // Complete all blocks and add final text if different
-              const blocks = (msg.blocks || []).map(b =>
-                b.type === 'text' && b.status === 'streaming'
-                  ? { ...b, status: 'completed' as const }
-                  : b
-              )
-
-              return {
-                ...msg,
-                content: messageContent,
-                status: 'completed',
-                blocks
               }
+              return b
             })
-          })
-        }
-        break
+          }
+        })
+      })
+      return
+    }
 
-      case 'turn':
-        // Turn completed
-        currentAssistantMsgRef.current = null
-        setStreamingText('')
-        setStatus('idle')
-        break
-
-      case 'error':
-        setMessages(prev => [...prev, {
-          id: generateId(),
-          role: 'error',
-          content: data.data?.message || 'An error occurred',
-        }])
-        setStatus('error')
-        break
+    if (type === 'turn') {
+      currentAssistantMsgRef.current = null
+      setStreamingText('')
+      setStatus('idle')
     }
   }, [])
 
@@ -691,7 +565,6 @@ export default function App() {
       timestamp: new Date().toISOString()
     }
 
-    // Create placeholder for assistant response
     const assistantMsgId = generateId()
     const assistantMessage: Message = {
       id: assistantMsgId,
@@ -706,77 +579,12 @@ export default function App() {
     setStreamingText('')
     setStatus('thinking')
 
-    // Send via WebSocket if connected
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'message',
         content: input,
         system: SYSTEM_PROMPT
       }))
-    } else {
-      // Fallback to HTTP
-      try {
-        const res = await fetch(`${API_BASE}/sessions/${currentSession}/messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            content: input,
-            system: SYSTEM_PROMPT
-          })
-        })
-        const data = await res.json()
-
-        if (data.error) {
-          setMessages(prev => prev.map(msg =>
-            msg.id === assistantMsgId
-              ? { ...msg, role: 'error', content: data.error, status: 'completed' }
-              : msg
-          ))
-        } else {
-          const blocks: Block[] = []
-
-          if (data.executed_tools) {
-            for (const tool of data.executed_tools) {
-              blocks.push({
-                id: generateId(),
-                type: 'tool',
-                toolCall: {
-                  id: tool.id || generateId(),
-                  name: tool.name,
-                  arguments: tool.arguments,
-                  result: tool.result,
-                  status: tool.result?.error ? 'error' : 'success'
-                }
-              })
-            }
-          }
-
-          if (data.content) {
-            blocks.push({
-              id: generateId(),
-              type: 'text',
-              content: data.content,
-              status: 'completed'
-            })
-          }
-
-          setMessages(prev => prev.map(msg =>
-            msg.id === assistantMsgId
-              ? { ...msg, content: data.content, blocks, status: 'completed' }
-              : msg
-          ))
-        }
-      } catch (e) {
-        console.error('Failed to send message:', e)
-        setMessages(prev => prev.map(msg =>
-          msg.id === assistantMsgId
-            ? { ...msg, role: 'error', content: 'Failed to send message', status: 'completed' }
-            : msg
-        ))
-      } finally {
-        setStatus('idle')
-        currentAssistantMsgRef.current = null
-      }
     }
   }, [input, currentSession, status])
 
@@ -788,73 +596,55 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      {/* Sidebar */}
-      <div className="w-64 bg-gray-900 text-white flex flex-col">
-        <div className="p-4 border-b border-gray-700">
-          <h1 className="text-xl font-bold">ComfyUI AgentX</h1>
-          <p className="text-xs text-gray-400 mt-1">AI Workflow Assistant</p>
-        </div>
+    <div className="flex h-screen bg-gray-50/50 text-gray-900 font-sans selection:bg-indigo-100">
+      <Sidebar 
+        sessions={sessions} 
+        currentSession={currentSession}
+        onCreateSession={createSession}
+        onSelectSession={selectSession}
+      />
 
-        <button
-          onClick={createSession}
-          className="m-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition font-medium"
-        >
-          + New Chat
-        </button>
+      <div className="flex-1 flex flex-col min-w-0 bg-white/40 backdrop-blur-3xl relative overflow-hidden">
+        {/* Decorative background blob */}
+        <div className="absolute -top-[10%] -right-[5%] w-[40%] h-[40%] bg-indigo-50 rounded-full blur-[120px] -z-10 opacity-60" />
+        <div className="absolute -bottom-[5%] -left-[5%] w-[30%] h-[30%] bg-blue-50 rounded-full blur-[100px] -z-10 opacity-60" />
 
-        <div className="flex-1 overflow-y-auto">
-          {sessions.map(session => (
-            <div
-              key={session.session_id}
-              onClick={() => selectSession(session.session_id)}
-              className={`p-3 cursor-pointer hover:bg-gray-800 transition ${
-                currentSession === session.session_id ? 'bg-gray-800 border-l-2 border-blue-500' : ''
-              }`}
-            >
-              <div className="font-medium truncate">{session.title || 'Untitled'}</div>
-              <div className="text-xs text-gray-400">
-                {new Date(session.created_at).toLocaleDateString()}
-              </div>
+        {!currentSession ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+            <div className="w-24 h-24 bg-gradient-to-tr from-indigo-600 to-blue-500 rounded-[2rem] flex items-center justify-center text-4xl mb-8 shadow-2xl shadow-indigo-500/20 rotate-3 hover:rotate-0 transition-transform duration-500">
+              ⚡
             </div>
-          ))}
-        </div>
-
-        {/* Status indicator at bottom */}
-        <div className="p-4 border-t border-gray-700">
-          <StatusIndicator status={status} />
-        </div>
-      </div>
-
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
-        {currentSession ? (
+            <h2 className="text-4xl font-extrabold text-gray-900 mb-4 tracking-tight">AgentX Assistant</h2>
+            <p className="text-gray-500 max-w-sm mb-10 text-lg leading-relaxed">
+              Your AI partner for creating, analyzing and debugging ComfyUI workflows.
+            </p>
+            <button
+              onClick={createSession}
+              className="px-10 py-4 bg-[#0f111a] hover:bg-black text-white rounded-2xl font-bold shadow-xl shadow-black/10 transition-all hover:scale-[1.02] active:scale-95 flex items-center gap-3"
+            >
+              Start a New Session
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </button>
+          </div>
+        ) : (
           <>
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {messages.length === 0 && (
-                <div className="text-center text-gray-500 mt-8">
-                  <p className="text-lg font-medium">Start a conversation</p>
-                  <p className="text-sm mt-2">Ask about ComfyUI nodes, workflows, or debugging</p>
-                  <div className="mt-6 grid grid-cols-2 gap-2 max-w-md mx-auto">
-                    {[
-                      'Create a text-to-image workflow',
-                      'List available models',
-                      'Analyze my current workflow',
-                      'Search for upscale nodes'
-                    ].map(prompt => (
-                      <button
-                        key={prompt}
-                        onClick={() => setInput(prompt)}
-                        className="p-3 text-left text-sm bg-white rounded-lg shadow-sm hover:shadow-md transition border"
-                      >
-                        {prompt}
-                      </button>
-                    ))}
-                  </div>
+            <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 px-8 py-4 flex items-center justify-between z-10 sticky top-0">
+              <div className="flex items-center gap-4">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] animate-pulse" />
+                <h2 className="font-bold text-gray-800 tracking-tight">
+                  {sessions.find(s => s.session_id === currentSession)?.title || 'Current Chat'}
+                </h2>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="px-3 py-1 bg-indigo-50 rounded-full text-[10px] font-bold text-indigo-600 uppercase tracking-widest border border-indigo-100/50">
+                  {status.replace('_', ' ')}
                 </div>
-              )}
+              </div>
+            </header>
 
+            <div className="flex-1 overflow-y-auto p-6 md:p-10 lg:px-32 space-y-2 scroll-smooth">
               {messages.map(msg => (
                 <MessageItem
                   key={msg.id}
@@ -862,45 +652,46 @@ export default function App() {
                   streamingText={msg.id === currentAssistantMsgRef.current ? streamingText : undefined}
                 />
               ))}
-
-              <div ref={messagesEndRef} />
+              <div ref={messagesEndRef} className="h-8" />
             </div>
 
-            {/* Input */}
-            <div className="border-t bg-white p-4">
-              <div className="flex gap-2 max-w-4xl mx-auto">
-                <textarea
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder="Type your message..."
-                  className="flex-1 px-4 py-2 border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  rows={1}
-                  disabled={status !== 'idle'}
-                />
-                <button
-                  onClick={sendMessage}
-                  disabled={status !== 'idle' || !input.trim()}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium"
-                >
-                  Send
-                </button>
+            <div className="px-6 pb-8 pt-4">
+              <div className="max-w-4xl mx-auto">
+                <div className="relative group">
+                  <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 to-blue-500 rounded-2xl blur opacity-0 group-focus-within:opacity-15 transition duration-500" />
+                  <textarea
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={handleKeyPress}
+                    placeholder="Describe your workflow or ask a question..."
+                    className="relative w-full pl-6 pr-20 py-5 rounded-2xl border border-gray-200 bg-white focus:ring-0 focus:border-indigo-400 transition-all resize-none shadow-xl shadow-black/5 text-[15px] leading-relaxed"
+                    rows={1}
+                    style={{ minHeight: '70px', maxHeight: '250px' }}
+                    disabled={status !== 'idle' && status !== 'error'}
+                  />
+                  <button
+                    onClick={sendMessage}
+                    disabled={!input.trim() || (status !== 'idle' && status !== 'error')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 w-12 h-12 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-20 disabled:grayscale transition-all shadow-lg shadow-indigo-600/30 flex items-center justify-center group/btn active:scale-90"
+                  >
+                    <svg className="w-5 h-5 group-hover/btn:translate-x-0.5 group-hover/btn:-translate-y-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="flex justify-between items-center mt-3 px-2">
+                  <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-[0.15em] flex items-center gap-2">
+                    <kbd className="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-200 text-gray-500 font-sans shadow-sm">Enter</kbd>
+                    to Send
+                  </span>
+                  <div className="flex gap-4">
+                    <span className="text-[10px] text-gray-400 font-bold hover:text-indigo-500 cursor-pointer transition-colors uppercase tracking-wider">Help</span>
+                    <span className="text-[10px] text-gray-400 font-bold hover:text-indigo-500 cursor-pointer transition-colors uppercase tracking-wider">Settings</span>
+                  </div>
+                </div>
               </div>
             </div>
           </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-500">
-            <div className="text-center max-w-md">
-              <h2 className="text-2xl font-bold mb-4">Welcome to ComfyUI AgentX</h2>
-              <p className="mb-6">Your AI-powered workflow assistant with 26 specialized tools</p>
-              <button
-                onClick={createSession}
-                className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition font-medium"
-              >
-                Start New Chat
-              </button>
-            </div>
-          </div>
         )}
       </div>
     </div>

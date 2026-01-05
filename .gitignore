@@ -78,6 +78,10 @@ htmlcov/
 .tox/
 coverage.xml
 *.cover
+test_sdk_*.py
+
+# Vite cache
+ui/.vite/
 
 # Alembic
 alembic/versions/__pycache__/

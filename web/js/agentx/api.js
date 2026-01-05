@@ -1,5 +1,6 @@
 /**
  * AgentX API Client
+ * Uses HTTP Streaming (NDJSON) for reliable message delivery
  */
 
 const API_BASE = "/api/agentx";
@@ -13,126 +14,112 @@ export async function createSession() {
     return response.json();
 }
 
-export async function sendMessage(sessionId, content, system) {
-    const response = await fetch(`${API_BASE}/sessions/${sessionId}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, system })
-    });
-    return response.json();
-}
-
 /**
- * Create WebSocket connection for streaming
+ * Stream chat messages using HTTP Streaming (NDJSON format)
+ * This replaces WebSocket for reliable, ordered message delivery
+ *
  * @param {string} sessionId - Session ID
- * @param {object} callbacks - Event callbacks
- * @returns {WebSocket}
- */
-export function createStreamConnection(sessionId, callbacks) {
-    const { onText, onToolCall, onToolResult, onDone, onError, onOpen } = callbacks;
-
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}${API_BASE}/sessions/${sessionId}/stream`;
-
-    console.log("[AgentX] Connecting to WebSocket:", wsUrl);
-    const ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-        console.log("[AgentX] WebSocket connected");
-        onOpen?.();
-    };
-
-    ws.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            handleStreamEvent(data, callbacks);
-        } catch (e) {
-            console.warn("[AgentX] Failed to parse WS message:", event.data);
-        }
-    };
-
-    ws.onerror = (error) => {
-        console.error("[AgentX] WebSocket error:", error);
-        onError?.(error);
-    };
-
-    ws.onclose = () => {
-        console.log("[AgentX] WebSocket closed");
-        onDone?.();
-    };
-
-    return ws;
-}
-
-/**
- * Send message via WebSocket
- * @param {WebSocket} ws - WebSocket connection
  * @param {string} content - User message
  * @param {string} system - System prompt
+ * @param {object} callbacks - Event callbacks
+ * @returns {Promise<void>}
  */
-export function sendViaWebSocket(ws, content, system) {
-    if (ws.readyState !== WebSocket.OPEN) {
-        throw new Error("WebSocket not connected");
-    }
+export async function streamChat(sessionId, content, system, callbacks) {
+    const { onStart, onText, onToolStart, onToolEnd, onDone, onError } = callbacks;
 
-    ws.send(JSON.stringify({
-        type: "message",
-        content: content,
-        system: system
-    }));
+    try {
+        const response = await fetch(`${API_BASE}/sessions/${sessionId}/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content, system })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+            throw new Error("No response body");
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+                if (!line.trim()) continue;
+
+                try {
+                    const event = JSON.parse(line);
+                    handleStreamEvent(event, callbacks);
+                } catch (e) {
+                    console.warn("[AgentX] Failed to parse NDJSON line:", line);
+                }
+            }
+        }
+
+        // Process any remaining buffer
+        if (buffer.trim()) {
+            try {
+                const event = JSON.parse(buffer);
+                handleStreamEvent(event, callbacks);
+            } catch (e) {
+                console.warn("[AgentX] Failed to parse final NDJSON:", buffer);
+            }
+        }
+    } catch (e) {
+        console.error("[AgentX] Stream error:", e);
+        onError?.(e);
+    }
 }
 
 function handleStreamEvent(event, callbacks) {
-    const { onText, onToolCall, onToolResult, onTurnComplete } = callbacks;
+    const { onStart, onText, onToolStart, onToolEnd, onDone, onError } = callbacks;
 
-    // Handle different event types based on backend format
     switch (event.type) {
-        case "stream":
-            // Text streaming event - data is the text string directly
-            if (event.data) {
-                const text = typeof event.data === 'string' ? event.data : event.data.text;
-                if (text) {
-                    onText?.(text);
-                }
+        case "start":
+            onStart?.();
+            break;
+
+        case "text":
+            if (event.content) {
+                onText?.(event.content);
             }
             break;
 
-        case "state":
-            // State change event (thinking, tool_calling, etc.)
-            console.log("[AgentX] State:", event.data?.state);
-            break;
-
-        case "message":
-            // Complete message event
-            if (event.data?.content) {
-                onText?.(event.data.content);
-            }
-            break;
-
-        case "turn":
-            // Turn complete event - always call to finish the message
-            // executed_tools may be empty array or undefined if no tools were called
-            onTurnComplete?.(event.data || {});
-            break;
-
-        case "tool_use":
-        case "tool_call":
-            onToolCall?.({
-                id: event.data?.id || event.id,
-                name: event.data?.name || event.name,
-                arguments: event.data?.input || event.input
+        case "tool_start":
+            onToolStart?.({
+                id: event.tool_id,
+                name: event.name,
+                arguments: event.input
             });
             break;
 
-        case "tool_result":
-            onToolResult?.({
-                id: event.data?.tool_use_id || event.tool_use_id,
-                result: event.data?.content || event.content
+        case "tool_end":
+            onToolEnd?.({
+                id: event.tool_id,
+                name: event.name,
+                arguments: event.input,
+                result: event.result,
+                success: event.success
             });
+            break;
+
+        case "done":
+            onDone?.(event.executed_tools || []);
             break;
 
         case "error":
-            callbacks.onError?.(new Error(event.data?.message || event.message || "Unknown error"));
+            onError?.(new Error(event.message || "Unknown error"));
             break;
 
         default:

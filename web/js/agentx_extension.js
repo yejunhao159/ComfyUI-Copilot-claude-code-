@@ -8,8 +8,59 @@ import { app } from "/scripts/app.js";
 import { injectStyles } from "./agentx/styles.js";
 import { ICONS } from "./agentx/icons.js";
 import { renderToolCalls, bindToolExpanders, escapeHtml } from "./agentx/tools.js";
-import { createSession, sendMessage, buildSystemPrompt, createStreamConnection, sendViaWebSocket, syncWorkflowToBackend } from "./agentx/api.js";
+import { createSession, streamChat, buildSystemPrompt, syncWorkflowToBackend } from "./agentx/api.js";
 import { getWorkflowContext, loadWorkflowToCanvas, getFullWorkflowAsync } from "./agentx/workflow.js";
+
+function cleanContent(content) {
+    if (!content) return '';
+    // Remove <think> tags
+    let cleaned = content.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    // Remove multiple newlines
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+    return cleaned.trim();
+}
+
+function parseMarkdown(text) {
+    if (!text) return '';
+
+    // 1. Split by code blocks to avoid processing inside code
+    const parts = text.split(/(```[\s\S]*?```)/g);
+
+    return parts.map(part => {
+        if (part.startsWith('```') && part.endsWith('```')) {
+            // It's a code block
+            const content = part.slice(3, -3).replace(/^[a-z]+\n/, ''); // remove language if present
+            return `<pre><code>${escapeHtml(content)}</code></pre>`;
+        }
+
+        // It's regular text
+        let html = escapeHtml(part);
+
+        // Inline code
+        html = html.replace(/`([^`]+)`/g, '<code class="inline">$1</code>');
+
+        // Bold
+        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+        // Headers
+        html = html.replace(/^### (.*$)/gm, '<h3>$1</h3>');
+        html = html.replace(/^## (.*$)/gm, '<h3>$1</h3>'); // Downgrade h2
+        html = html.replace(/^# (.*$)/gm, '<h3>$1</h3>');  // Downgrade h1
+
+        // Lists
+        html = html.replace(/^\s*[-*] (.*$)/gm, '<li>$1</li>');
+        // Wrap adjacent lis in ul (simple heuristic, might not be perfect)
+        html = html.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>'); 
+
+        // Links
+        html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+        
+        // Newlines to br
+        html = html.replace(/\n/g, '<br>');
+
+        return html;
+    }).join('');
+}
 
 class AgentXSidebar {
     constructor() {
@@ -19,10 +70,11 @@ class AgentXSidebar {
         this.sessionId = null;
         this.isOpen = false;
         this.isLoading = false;
-        this.ws = null;  // WebSocket connection
-        this.useStreaming = true;  // Enable streaming by default
         this.currentWorkflow = null;  // Cached workflow from canvas
+        this.currentStreamingMessageContent = ""; // Buffer for streaming
+        this.executedTools = []; // Tools executed in current turn
     }
+
 
     init() {
         injectStyles();
@@ -70,8 +122,10 @@ class AgentXSidebar {
                 </div>
             </div>
             <div class="agentx-input-area">
-                <textarea id="agentx-input" placeholder="Ask about workflows..." rows="1"></textarea>
-                <button id="agentx-send">${ICONS.send}</button>
+                <div class="agentx-input-wrapper">
+                    <textarea id="agentx-input" placeholder="Ask about workflows..." rows="1"></textarea>
+                    <button id="agentx-send">${ICONS.send}</button>
+                </div>
             </div>
         `;
         document.body.appendChild(sidebar);
@@ -120,21 +174,10 @@ class AgentXSidebar {
 
     async newChat() {
         try {
-            // Close existing WebSocket
-            if (this.ws) {
-                this.ws.close();
-                this.ws = null;
-            }
-
             const session = await createSession();
             this.sessionId = session.session_id;
             this.chatContainer.innerHTML = "";
             this.addSystemMessage("New chat started. How can I help?");
-
-            // Setup streaming connection
-            if (this.useStreaming) {
-                this.setupStreamConnection();
-            }
         } catch (e) {
             console.error("[AgentX] Failed to create session:", e);
             this.addErrorMessage("Failed to start chat.");
@@ -177,37 +220,6 @@ class AgentXSidebar {
         }
     }
 
-    setupStreamConnection() {
-        if (!this.sessionId) return;
-
-        this.ws = createStreamConnection(this.sessionId, {
-            onOpen: () => {
-                console.log("[AgentX] Stream ready");
-            },
-            onText: (text) => {
-                this.appendToCurrentMessage(text);
-            },
-            onToolCall: (tool) => {
-                console.log("[AgentX] Tool called:", tool.name);
-                this.addToolIndicator(tool);
-            },
-            onToolResult: (result) => {
-                console.log("[AgentX] Tool result:", result);
-            },
-            onTurnComplete: (data) => {
-                console.log("[AgentX] Turn complete:", data);
-                this.finishCurrentMessage(data.executed_tools);
-            },
-            onError: (error) => {
-                console.error("[AgentX] Stream error:", error);
-                this.addErrorMessage("Connection error.");
-            },
-            onDone: () => {
-                console.log("[AgentX] Stream ended");
-            }
-        });
-    }
-
     appendToCurrentMessage(text) {
         let msg = this.chatContainer.querySelector(".agentx-message.assistant.streaming");
         if (!msg) {
@@ -215,10 +227,15 @@ class AgentXSidebar {
             msg.className = "agentx-message assistant streaming";
             msg.innerHTML = `<div class="agentx-message-content"></div>`;
             this.chatContainer.appendChild(msg);
+            this.currentStreamingMessageContent = "";
         }
 
+        this.currentStreamingMessageContent += text;
         const content = msg.querySelector(".agentx-message-content");
-        content.textContent += text;
+        
+        // Parse markdown on every update (might be heavy but ensures correct look)
+        content.innerHTML = parseMarkdown(cleanContent(this.currentStreamingMessageContent));
+        
         this.scrollToBottom();
     }
 
@@ -246,6 +263,7 @@ class AgentXSidebar {
         const msg = this.chatContainer.querySelector(".agentx-message.assistant.streaming");
         if (msg) {
             msg.classList.remove("streaming");
+            this.currentStreamingMessageContent = ""; // Clear buffer
 
             // Remove tool indicator
             const indicator = msg.querySelector(".agentx-tool-indicator");
@@ -307,7 +325,9 @@ class AgentXSidebar {
 
         let html = '';
         if (content) {
-            html += `<div class="agentx-message-content">${escapeHtml(content)}</div>`;
+            // Clean and parse markdown
+            const parsed = parseMarkdown(cleanContent(content));
+            html += `<div class="agentx-message-content">${parsed}</div>`;
         }
         if (role === 'assistant' && toolCalls?.length > 0) {
             html += renderToolCalls(toolCalls);
@@ -332,11 +352,6 @@ class AgentXSidebar {
             try {
                 const session = await createSession();
                 this.sessionId = session.session_id;
-
-                // Setup streaming if enabled
-                if (this.useStreaming) {
-                    this.setupStreamConnection();
-                }
             } catch (e) {
                 this.addErrorMessage("Failed to create session.");
                 return;
@@ -360,52 +375,49 @@ class AgentXSidebar {
         this.scrollToBottom();
 
         this.isLoading = true;
+        this.executedTools = [];
         const sendBtn = document.getElementById("agentx-send");
         sendBtn.disabled = true;
 
         // Build system prompt with workflow context
-        // Use cached workflow if available, otherwise get fresh
         const workflowContext = getWorkflowContext();
         const system = buildSystemPrompt(workflowContext, this.currentWorkflow);
 
-        // Try streaming first, fall back to non-streaming
-        if (this.useStreaming && this.ws && this.ws.readyState === WebSocket.OPEN) {
-            try {
-                sendViaWebSocket(this.ws, content, system);
-                // The response will be handled by WebSocket callbacks
-                return;
-            } catch (e) {
-                console.warn("[AgentX] WebSocket send failed, falling back to HTTP:", e);
-            }
-        }
-
-        // Non-streaming fallback
-        try {
-            const data = await sendMessage(this.sessionId, content, system);
-
-            typing.remove();
-
-            if (data.error) {
-                this.addErrorMessage(`Error: ${data.error}`);
-            } else {
-                // Process workflow updates
-                if (data.executed_tools) {
-                    for (const tool of data.executed_tools) {
-                        if (tool.name === "update_workflow" && tool.arguments?.workflow_data) {
-                            loadWorkflowToCanvas(tool.arguments.workflow_data);
-                        }
-                    }
+        // Use HTTP Streaming
+        await streamChat(this.sessionId, content, system, {
+            onStart: () => {
+                // Remove typing indicator when we start getting response
+                const t = this.chatContainer.querySelector(".agentx-typing");
+                if (t) t.remove();
+            },
+            onText: (text) => {
+                this.appendToCurrentMessage(text);
+            },
+            onToolStart: (tool) => {
+                console.log("[AgentX] Tool start:", tool.name);
+                this.addToolIndicator(tool);
+            },
+            onToolEnd: (tool) => {
+                console.log("[AgentX] Tool end:", tool.name);
+                this.executedTools.push(tool);
+                // Auto-load workflow if update_workflow was called
+                if (tool.name === "update_workflow" && tool.arguments?.workflow_data) {
+                    loadWorkflowToCanvas(tool.arguments.workflow_data);
                 }
-                this.addMessage("assistant", data.content || "", data.executed_tools);
+            },
+            onDone: (tools) => {
+                console.log("[AgentX] Stream done, tools:", tools);
+                this.finishCurrentMessage(tools.length > 0 ? tools : this.executedTools);
+            },
+            onError: (error) => {
+                console.error("[AgentX] Stream error:", error);
+                const t = this.chatContainer.querySelector(".agentx-typing");
+                if (t) t.remove();
+                this.addErrorMessage(`Error: ${error.message}`);
+                this.isLoading = false;
+                sendBtn.disabled = false;
             }
-        } catch (e) {
-            typing.remove();
-            console.error("[AgentX] Send failed:", e);
-            this.addErrorMessage("Failed to send message.");
-        } finally {
-            this.isLoading = false;
-            sendBtn.disabled = false;
-        }
+        });
     }
 }
 

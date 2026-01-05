@@ -2,6 +2,11 @@
 ComfyUI-AgentX: AI Agent for ComfyUI workflow debugging and manipulation.
 
 Based on Deepractice AgentX runtime with Claude integration.
+
+Features:
+- True Agentic Loop via claude-agent-sdk
+- HTTP Streaming (NDJSON) for real-time updates
+- ComfyUI workflow manipulation tools
 """
 # Copyright (C) 2025 Deepractice
 # Licensed under the MIT License.
@@ -31,12 +36,12 @@ import server
 from aiohttp import web
 import folder_paths
 
-from .backend.agentx.api.server import create_agentx_routes
+from .backend.agentx.api.server_v2 import create_agentx_routes_v2
 
 # Configuration
 NODE_CLASS_MAPPINGS = {}
 __all__ = ['NODE_CLASS_MAPPINGS']
-version = "V3.0.0"
+version = "V4.0.0"
 
 # Web extension directory - ComfyUI will auto-discover and load JS files
 WEB_DIRECTORY = "web"
@@ -48,9 +53,14 @@ db_dir_path = os.path.join(workspace_path, "db")
 
 # Register AgentX API routes
 try:
-    agentx_routes = create_agentx_routes()
+    agentx_routes = create_agentx_routes_v2()
     server.PromptServer.instance.app.add_routes(agentx_routes)
-    logger.info("AgentX API routes registered", endpoint="/api/agentx/", version=version)
+    logger.info(
+        "AgentX API routes registered",
+        endpoint="/api/agentx/",
+        version=version,
+        runtime="Agentic Loop",
+    )
 except Exception as e:
     logger.exception("Failed to register AgentX API routes")
 

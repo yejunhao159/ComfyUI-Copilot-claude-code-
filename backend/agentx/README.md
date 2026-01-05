@@ -1,15 +1,15 @@
-# AgentX Runtime
+# AgentX Runtime V2
 
-完整的 Python AgentX 运行时环境，为 ComfyUI 提供 Claude Code 能力。
+完整的 Python AgentX 运行时环境，为 ComfyUI 提供 True Agentic Loop 能力。
 
 ## 特性
 
-- **事件驱动架构**: 基于 asyncio.Queue 的 Pub/Sub 系统
+- **True Agentic Loop**: 基于 claude-agent-sdk 的自主智能体循环
+- **事件驱动架构**: 基于 SystemBus 的 Pub/Sub 系统
 - **4层事件系统**: Stream (文本流) / State (状态) / Message (消息) / Turn (对话轮次)
-- **Claude API 集成**: 支持流式生成和工具调用
-- **持久化会话**: SQLAlchemy + SQLite 会话管理
-- **MCP 协议支持**: 内置 ComfyUI 工具集成
-- **RESTful API**: aiohttp-based HTTP + WebSocket 服务器
+- **HTTP Streaming**: NDJSON 格式的实时数据流
+- **Claude SDK 集成**: 支持流式生成、工具调用和 MCP 协议
+- **RESTful API**: aiohttp-based HTTP 服务器
 
 ## 安装
 
@@ -20,11 +20,9 @@ pip install -r requirements.txt
 ```
 
 关键依赖:
-- `anthropic>=0.40.0` - Claude API SDK
+- `claude-agent-sdk>=0.1.18` - Claude Agent SDK (True Agentic Loop)
 - `aiohttp>=3.8.0` - 异步 HTTP 服务器
-- `sqlalchemy>=1.4.0,<2.0` - 数据库 ORM
-- `alembic>=1.13.0` - 数据库迁移
-- `fastmcp` - MCP 服务器框架
+- `python-dotenv` - 环境变量管理
 
 ### 2. 配置环境变量
 
@@ -41,69 +39,54 @@ ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 
 可选配置:
 ```env
-AGENTX_MODEL=claude-3-5-sonnet-20241022
-AGENTX_MAX_TOKENS=4096
-AGENTX_DATABASE_URL=sqlite:///agentx_sessions.db
+AGENTX_MODEL=claude-sonnet-4-20250514
 AGENTX_LOG_LEVEL=INFO
-```
-
-### 3. 初始化数据库
-
-```bash
-cd backend/agentx/persistence
-alembic upgrade head
 ```
 
 ## 使用
 
-### 方式 1: 独立 API 服务器
+### 方式 1: 作为 ComfyUI 插件
 
-```bash
-python3 -m backend.agentx.cli --host 0.0.0.0 --port 8000
-```
+将整个目录放入 ComfyUI 的 `custom_nodes` 目录，重启 ComfyUI。
 
 服务器启动后可访问:
 - `POST /api/agentx/sessions` - 创建会话
-- `POST /api/agentx/sessions/{id}/messages` - 发送消息
-- `WS /api/agentx/sessions/{id}/stream` - 事件流
+- `POST /api/agentx/sessions/{id}/chat` - HTTP Streaming 聊天 (推荐)
+- `POST /api/agentx/sessions/{id}/messages` - 发送消息 (非流式)
+- `GET /api/agentx/health` - 健康检查
 
 ### 方式 2: 编程接口
 
 ```python
 import asyncio
-from backend.agentx.config import AgentConfig
-from backend.agentx.runtime import EventBus, AgentEngine, Container
-from backend.agentx.persistence import PersistenceService
+from backend.agentx.runtime_v2 import (
+    create_runtime,
+    RuntimeConfig,
+)
 
 async def main():
-    # 加载配置
-    config = AgentConfig.from_env()
+    # 创建 Runtime
+    runtime = await create_runtime(RuntimeConfig(
+        api_key="your-api-key",
+        model="claude-sonnet-4-20250514",
+        system_prompt="You are a ComfyUI workflow assistant.",
+    ))
 
-    # 初始化组件
-    event_bus = EventBus(maxsize=1000)
-    await event_bus.start()
+    # Quick start - 创建 Container 和 Agent
+    container, agent = await runtime.quick_start()
 
-    persistence = PersistenceService(config)
-    agent_engine = AgentEngine(config, event_bus)
-    container = Container(config, event_bus, agent_engine, persistence)
+    # 订阅事件
+    def on_text(event):
+        text = event.data.get("text", "") if isinstance(event.data, dict) else ""
+        print(text, end="", flush=True)
 
-    # 创建会话
-    session = await container.create_session(
-        user_id="user-123",
-        title="My Debug Session"
-    )
+    runtime.events.on("text_delta", on_text)
 
-    # 发送消息
-    response = await container.send_message(
-        session_id=session.session_id,
-        content="Help me debug this ComfyUI workflow"
-    )
-
-    print(f"Response: {response.content}")
+    # 发送消息 - SDK 自动处理 Agentic Loop
+    await agent.receive("Help me create a simple image generation workflow")
 
     # 清理
-    await event_bus.stop()
-    await agent_engine.close()
+    await runtime.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -118,9 +101,7 @@ POST /api/agentx/sessions
 Content-Type: application/json
 
 {
-  "user_id": "user-123",
-  "title": "Debug Session",
-  "config": {}
+  "system": "Optional system prompt override"
 }
 ```
 
@@ -128,131 +109,135 @@ Content-Type: application/json
 ```json
 {
   "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "agent_id": "agent_abc123",
   "created_at": "2025-01-02T10:00:00Z",
-  "state": "idle",
-  "message_count": 0
+  "state": "idle"
 }
 ```
 
-### 发送消息
+### HTTP Streaming 聊天 (推荐)
 
 ```http
-POST /api/agentx/sessions/{session_id}/messages
+POST /api/agentx/sessions/{session_id}/chat
 Content-Type: application/json
 
 {
   "content": "Help me debug this workflow",
-  "system": "You are a ComfyUI debugging expert"
+  "system": "Optional system prompt"
 }
 ```
 
-响应:
-```json
-{
-  "message_id": "msg-123",
-  "role": "assistant",
-  "content": "I'll help you debug...",
-  "tool_calls": [],
-  "input_tokens": 100,
-  "output_tokens": 50
-}
+响应 (NDJSON 流):
+```
+{"type": "start", "turn_id": "..."}
+{"type": "state", "state": "thinking"}
+{"type": "text", "content": "I'll help you..."}
+{"type": "tool_start", "tool_id": "...", "name": "get_workflow"}
+{"type": "tool_end", "tool_id": "...", "result": {...}}
+{"type": "done", "content": "Full response", "duration_ms": 1234}
 ```
 
-### WebSocket 事件流
+### JavaScript 客户端示例
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8000/api/agentx/sessions/{id}/stream');
+async function chat(sessionId, content) {
+  const response = await fetch(`/api/agentx/sessions/${sessionId}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content })
+  });
 
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
 
-  switch (data.type) {
-    case 'stream':
-      console.log('Token:', data.data);
-      break;
-    case 'state':
-      console.log('State:', data.data.state);
-      break;
-    case 'message':
-      console.log('Message:', data.data.content);
-      break;
-    case 'turn':
-      console.log('Turn complete:', data.data.duration_ms, 'ms');
-      break;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const lines = decoder.decode(value).split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line);
+
+      switch (event.type) {
+        case 'text':
+          process.stdout.write(event.content);
+          break;
+        case 'state':
+          console.log('State:', event.state);
+          break;
+        case 'done':
+          console.log('\nComplete:', event.duration_ms, 'ms');
+          break;
+      }
+    }
   }
-};
+}
 ```
 
 ## 架构
 
 ```
 backend/agentx/
-├── config.py              # 配置管理
-├── runtime/
-│   ├── types.py           # 核心类型定义
-│   ├── event_bus.py       # 事件总线 (Pub/Sub)
-│   ├── agent_engine.py    # Claude API 集成
-│   └── container.py       # 会话管理器
-├── persistence/
-│   ├── models.py          # SQLAlchemy ORM 模型
-│   ├── service.py         # 持久化服务
-│   └── migrations/        # Alembic 迁移
+├── config.py                 # 配置管理
+├── runtime_v2/               # V2 运行时 (True Agentic Loop)
+│   ├── types.py              # 核心类型定义
+│   ├── system_bus.py         # 事件总线 (Pub/Sub)
+│   ├── agent.py              # RuntimeAgent 实现
+│   ├── container.py          # RuntimeContainer (Image → Agent)
+│   ├── environment.py        # Claude SDK 集成 (Receptor/Effector)
+│   ├── runtime.py            # Runtime 入口
+│   └── mcp_integration.py    # MCP 工具集成
 ├── mcp_tools/
-│   └── comfyui_tools.py   # 内置 ComfyUI 工具
-├── api/
-│   └── server.py          # HTTP/WebSocket 服务器
-└── cli.py                 # 命令行入口
+│   └── comfyui_tools.py      # ComfyUI 工具定义
+└── api/
+    └── server_v2.py          # HTTP Streaming 服务器
 ```
 
-## 开发
+### 核心概念
 
-### 运行测试
+- **Runtime**: 顶层入口，管理 Containers 和事件总线
+- **Container**: Agent 的隔离环境，管理 Image → Agent 映射
+- **Agent**: 完整的运行时实体，包含 Engine + Environment + Session
+- **SystemBus**: 中央事件总线，所有组件通过它通信
+- **Environment**: Receptor (感知 SDK 响应) + Effector (发送到 SDK)
 
-```bash
-# 快速验证
-python3 backend/agentx/smoke_test.py
+### True Agentic Loop
 
-# 单元测试 (需要 pytest)
-pytest tests/agentx/unit/ -v
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    claude-agent-sdk                           │
+│                                                               │
+│   ┌────────────┐     ┌────────────┐     ┌────────────┐      │
+│   │   Gather   │────▶│    Take    │────▶│   Verify   │──┐   │
+│   │  Context   │     │   Action   │     │    Work    │  │   │
+│   └────────────┘     └────────────┘     └────────────┘  │   │
+│         ▲                                               │   │
+│         └───────────────────────────────────────────────┘   │
+│                         Repeat until done                    │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### 数据库迁移
-
-创建新迁移:
-```bash
-cd backend/agentx/persistence
-alembic revision --autogenerate -m "Add new table"
-```
-
-应用迁移:
-```bash
-alembic upgrade head
-```
-
-回滚迁移:
-```bash
-alembic downgrade -1
-```
+SDK 内部自动处理整个循环，我们只需要:
+1. 订阅 SystemBus 事件
+2. 发送 user_message
+3. 接收流式响应
 
 ## 故障排除
 
-### ImportError: No module named 'anthropic'
+### ImportError: No module named 'claude_agent_sdk'
 
-安装 anthropic SDK:
+安装 Claude Agent SDK:
 ```bash
-pip3 install anthropic>=0.40.0
+pip3 install claude-agent-sdk
 ```
 
-### Database locked error
+### API Key 错误
 
-SQLite 默认不支持高并发写入。对于生产环境，考虑使用 PostgreSQL:
+确保 `.env` 文件中设置了正确的 API Key:
 ```env
-AGENTX_DATABASE_URL=postgresql://user:pass@localhost/agentx
+ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 ```
-
-### WebSocket connection failed
-
-检查防火墙设置，确保端口 8000 可访问。
 
 ## 贡献
 

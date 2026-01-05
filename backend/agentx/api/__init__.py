@@ -1,9 +1,9 @@
 """
-AgentX HTTP API
+AgentX HTTP API V2
 
-RESTful API and WebSocket endpoints for AgentX runtime.
+HTTP Streaming API endpoints for AgentX runtime with Agentic Loop.
 """
 
-from .server import create_app
+from .server_v2 import create_agentx_routes_v2
 
-__all__ = ["create_app"]
+__all__ = ["create_agentx_routes_v2"]
